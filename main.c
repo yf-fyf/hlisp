@@ -7,7 +7,7 @@
 #include <assert.h>
 #include <sys/mman.h>
 
-#define DEBUG 0
+#define DEBUG 1
 
 void error(char *fmt, ...)
 {
@@ -102,7 +102,10 @@ pointer mk(cell tmp)
   return mp;
 }
 
-pointer make_data(int data) { return mk((cell){ T_DATA, .data = data }); }
+pointer make_data(int data)
+{
+  return mk((cell){ T_DATA, .data = data });
+}
 
 pointer make_cons(pointer car, pointer cdr)
 {
@@ -166,7 +169,11 @@ void sc(pointer p)
   }
 }
 
-void print_cell(pointer p) { sc(p); printf("\n"); }
+void print_cell(pointer p)
+{
+  sc(p);
+  printf("\n");
+}
 
 char lex_buf[MAX_LEN];
 
@@ -181,10 +188,26 @@ char lex()
   return c;
 }
 
-char space_lex()     { char c = lex(); return isspace(c)?space_lex():c; }
-void unlex(char c)   { ungetc(c, stdin); }
-int issymbol(char c) { return !(c == '(' || c == ')' || c == ';'); }
-int isident(char c)  { return !isspace(c) && issymbol(c); }
+char space_lex()
+{
+  char c = lex();
+  return isspace(c)?space_lex():c;
+}
+
+void unlex(char c)
+{
+  ungetc(c, stdin);
+}
+
+int issymbol(char c)
+{
+  return !(c == '(' || c == ')' || c == ';');
+}
+
+int isident(char c)
+{
+  return !isspace(c) && issymbol(c);
+}
 
 int read_num(char c)
 {
@@ -352,6 +375,58 @@ void prim_cdr(pointer *stk, pointer *env, pointer *cnt, pointer *dmp)
   *stk = CONS(CDR(arg), CDR(*stk));
 }
 
+void prim_list(pointer *stk, pointer *env, pointer *cnt, pointer *dmp)
+{
+  // Do nothing, since the arguments are already pushed to "*stk".
+}
+
+void prim_gensym(pointer *stk, pointer *env, pointer *cnt, pointer *dmp)
+{
+  static int id = 0;
+  char ident[MAX_LEN];
+  sprintf(ident, "_G%03d", id++);
+  *stk = CONS(make_ident(ident), CDR(*stk));
+  print_cell(*stk);
+}
+
+void macro_set(pointer *stk, pointer *env, pointer *cnt, pointer *dmp)
+{
+  pointer args = CAR(*stk);
+  // code: (_define (quote #ident#) #value#)
+  pointer code = CONS3(make_ident("_set!"), CONS3(make_ident("quote"), CAR(args), nil), CDR(args));
+  *stk = CDR(*stk);
+  *cnt = CONS(code, *cnt);
+}
+
+pointer set(pointer *env, char *ident, pointer value)
+{
+  if (TYPE(*env, T_NIL))
+    return make_ident("Error: unbound variable");
+  else {
+    bool eq = strcmp(CAAR(*env)->ident, ident) == 0;
+    return eq?(CDAR(*env) = value):set(&CDR(*env), ident, value);
+  }
+}
+
+void prim_set(pointer *stk, pointer *env, pointer *cnt, pointer *dmp)
+{
+  pointer args  = CAR(*stk);  
+  pointer ident = CAR(args);
+  pointer value = CADR(args);
+  pointer ret   = set(env, ident->ident, value);
+  *stk = CONS(ret, CDR(*stk));
+}
+
+void prim_begin(pointer *stk, pointer *env, pointer *cnt, pointer *dmp)
+{
+  pointer p = CAR(*stk);
+  if (!TYPE(p, T_NIL)) {
+    while (!TYPE(CDR(p), T_NIL))
+      p = CDR(p);
+  }
+  *stk = CONS(CAR(p), CDR(*stk));
+}
+
 void macro_delay(pointer *stk, pointer *env, pointer *cnt, pointer *dmp)
 {
   pointer arg = CAAR(*stk);
@@ -450,6 +525,11 @@ pointer init_env()
   add_primitive(&env, T_PRIM, "cons", prim_cons);
   add_primitive(&env, T_PRIM, "car", prim_car);
   add_primitive(&env, T_PRIM, "cdr", prim_cdr);
+  add_primitive(&env, T_PRIM, "list", prim_list);
+  add_primitive(&env, T_PRIM, "gensym", prim_gensym);
+  add_primitive(&env, T_MACRO, "set!", macro_set);
+  add_primitive(&env, T_PRIM, "_set!", prim_set);
+  add_primitive(&env, T_PRIM, "begin", prim_begin);
   add_primitive(&env, T_MACRO, "delay", macro_delay);
   add_primitive(&env, T_MACRO, "if", macro_if);
   add_primitive(&env, T_PRIM, "_if", prim_if);
