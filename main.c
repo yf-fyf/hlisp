@@ -361,15 +361,6 @@ void macro_quote(pointer *stk, pointer *env, pointer *cnt, pointer *dmp)
   *stk = CONS(arg, CDR(*stk));
 } 
 
-void macro_define(pointer *stk, pointer *env, pointer *cnt, pointer *dmp)
-{
-  pointer args = CAR(*stk);
-  // code: (_define (quote #ident#) #value#)
-  pointer code = CONS3(make_ident("_define"), CONS3(make_ident("quote"), CAR(args), nil), CDR(args));
-  *stk = CDR(*stk);
-  *cnt = CONS(code, *cnt);
-}
-
 void prim_define(pointer *stk, pointer *env, pointer *cnt, pointer *dmp)
 {
   pointer ident = CAAR(*stk);
@@ -411,15 +402,6 @@ void prim_gensym(pointer *stk, pointer *env, pointer *cnt, pointer *dmp)
   print_cell(*stk);
 }
 
-void macro_set(pointer *stk, pointer *env, pointer *cnt, pointer *dmp)
-{
-  pointer args = CAR(*stk);
-  // code: (_set! (quote #ident#) #value#)
-  pointer code = CONS3(make_ident("_set!"), CONS3(make_ident("quote"), CAR(args), nil), CDR(args));
-  *stk = CDR(*stk);
-  *cnt = CONS(code, *cnt);
-}
-
 pointer set(pointer *env, char *ident, pointer value)
 {
   if (TYPE(*env, T_NIL))
@@ -447,30 +429,6 @@ void prim_begin(pointer *stk, pointer *env, pointer *cnt, pointer *dmp)
       p = CDR(p);
   }
   *stk = CONS(CAR(p), CDR(*stk));
-}
-
-void macro_delay(pointer *stk, pointer *env, pointer *cnt, pointer *dmp)
-{
-  pointer arg = CAAR(*stk);
-  // cls: The closure of (lambda () #arg#)
-  pointer cls = make_closure(*env, nil, arg);
-  *stk = CONS(cls, CDR(*stk));
-}
-
-void macro_if(pointer *stk, pointer *env, pointer *cnt, pointer *dmp)
-{
-  pointer args       = CAR(*stk);
-  pointer cond_cell  = CAR(args);
-  pointer true_cell  = CADR(args);
-  pointer false_cell = CADDR(args);
-  pointer dt = CONS3(make_ident("delay"), true_cell, nil);
-  pointer df = CONS3(make_ident("delay"), false_cell, nil);
-  // code: (force (_if #c# (delay #t#) (delay #f#)))
-  pointer code = CONS3(make_ident("force"),
-                       CONS5(make_ident("_if"), cond_cell, dt, df, nil),
-                       nil);
-  *stk = CDR(*stk);
-  *cnt = CONS(code, *cnt);
 }
 
 void prim_if(pointer *stk, pointer *env, pointer *cnt, pointer *dmp)
@@ -544,18 +502,14 @@ pointer init_env()
   add_primitive(&env, T_PRIM, "eval", prim_eval);
   add_primitive(&env, T_PRIM, "print", prim_print);
   add_primitive(&env, T_MACRO, "quote", macro_quote);
-  // add_primitive(&env, T_MACRO, "define", macro_define);
   add_primitive(&env, T_PRIM, "_define", prim_define);
   add_primitive(&env, T_PRIM, "cons", prim_cons);
   add_primitive(&env, T_PRIM, "car", prim_car);
   add_primitive(&env, T_PRIM, "cdr", prim_cdr);
   add_primitive(&env, T_PRIM, "list", prim_list);
   add_primitive(&env, T_PRIM, "gensym", prim_gensym);
-  // add_primitive(&env, T_MACRO, "set!", macro_set);
   add_primitive(&env, T_PRIM, "_set!", prim_set);
   add_primitive(&env, T_PRIM, "begin", prim_begin);
-  // add_primitive(&env, T_MACRO, "delay", macro_delay);
-  // add_primitive(&env, T_MACRO, "if", macro_if);
   add_primitive(&env, T_PRIM, "_if", prim_if);
   add_primitive(&env, T_PRIM, "+", prim_add);
   add_primitive(&env, T_PRIM, "-", prim_sub);
