@@ -31,6 +31,7 @@ void error(char *fmt, ...)
 #define T_RET        512 // 0000 0010 0000 0000
 #define T_MACRO     1024 // 0000 0100 0000 0000
 #define T_ARGEND    2048 // 0000 1000 0000 0000
+#define T_USRMACRO  4096 // 0001 0000 0000 0000
 #define T_UNMARK  0x7FFF // 0111 1111 1111 1111
 #define T_MARK    0x8000 // 1000 0000 0000 0000
 
@@ -129,6 +130,11 @@ pointer make_closure(pointer env, pointer params, pointer body)
   return mk((cell){ T_CLOS, .env = env, .params = params, .body = body });
 }
 
+pointer make_user_macro(pointer env, pointer params, pointer body)
+{
+  return mk((cell){ T_USRMACRO, .env = env, .params = params, .body = body });
+}
+
 void sc(pointer p);
 
 void slist(pointer p)
@@ -153,7 +159,7 @@ void sc(pointer p)
                  // printf(", ");
                  // sc(p->body);
                  // printf(")>");
-                 // break;
+                 break;
   case T_IDENT:  printf("%s", p->ident);               break;
   case T_DATA:   printf("%d", p->data);                break;
   case T_CONS:   printf("("); slist(p); printf(")");   break;
@@ -162,9 +168,9 @@ void sc(pointer p)
   case T_CALL:   printf("call");                       break;
   case T_BACK:   printf("back");                       break;
   case T_RET:    printf("ret");                        break;
-  case T_MACRO:  printf("#<macro>"); break;
-                 // printf("#<macro: %s>", p->ident);     break;
+  case T_MACRO:  printf("#<macro: %s>", p->ident);     break;
   case T_ARGEND: printf("argend"); break;
+  case T_USRMACRO: printf("#<usrmacro>"); break;
   default:       error("Undefined type: %d", p->type);
   }
 }
@@ -325,6 +331,22 @@ void macro_lambda(pointer *stk,  pointer *env, pointer *cnt, pointer *dmp)
   *stk = CONS(cls, CDR(*stk));
 }
 
+void macro_macro(pointer *stk,  pointer *env, pointer *cnt, pointer *dmp)
+{
+  pointer params = CAAR(*stk);
+  pointer body   = CADAR(*stk);
+  pointer cls = make_user_macro(*env, params, body);
+  *stk = CONS(cls, CDR(*stk));
+}
+
+void prim_eval(pointer *stk, pointer *env, pointer *cnt, pointer *dmp)
+{
+  pointer arg = CAAR(*stk);
+  printf("expand: "); print_cell(arg);
+  *stk = CDR(*stk);
+  *cnt = CONS(arg, *cnt);
+}
+
 void prim_print(pointer *stk, pointer *env, pointer *cnt, pointer *dmp)
 {
   pointer ret = nil; 
@@ -392,7 +414,7 @@ void prim_gensym(pointer *stk, pointer *env, pointer *cnt, pointer *dmp)
 void macro_set(pointer *stk, pointer *env, pointer *cnt, pointer *dmp)
 {
   pointer args = CAR(*stk);
-  // code: (_define (quote #ident#) #value#)
+  // code: (_set! (quote #ident#) #value#)
   pointer code = CONS3(make_ident("_set!"), CONS3(make_ident("quote"), CAR(args), nil), CDR(args));
   *stk = CDR(*stk);
   *cnt = CONS(code, *cnt);
@@ -518,20 +540,22 @@ pointer init_env()
 {
   pointer env = nil;
   add_primitive(&env, T_MACRO, "lambda", macro_lambda);
+  add_primitive(&env, T_MACRO, "macro", macro_macro);
+  add_primitive(&env, T_PRIM, "eval", prim_eval);
   add_primitive(&env, T_PRIM, "print", prim_print);
   add_primitive(&env, T_MACRO, "quote", macro_quote);
-  add_primitive(&env, T_MACRO, "define", macro_define);
+  // add_primitive(&env, T_MACRO, "define", macro_define);
   add_primitive(&env, T_PRIM, "_define", prim_define);
   add_primitive(&env, T_PRIM, "cons", prim_cons);
   add_primitive(&env, T_PRIM, "car", prim_car);
   add_primitive(&env, T_PRIM, "cdr", prim_cdr);
   add_primitive(&env, T_PRIM, "list", prim_list);
   add_primitive(&env, T_PRIM, "gensym", prim_gensym);
-  add_primitive(&env, T_MACRO, "set!", macro_set);
+  // add_primitive(&env, T_MACRO, "set!", macro_set);
   add_primitive(&env, T_PRIM, "_set!", prim_set);
   add_primitive(&env, T_PRIM, "begin", prim_begin);
-  add_primitive(&env, T_MACRO, "delay", macro_delay);
-  add_primitive(&env, T_MACRO, "if", macro_if);
+  // add_primitive(&env, T_MACRO, "delay", macro_delay);
+  // add_primitive(&env, T_MACRO, "if", macro_if);
   add_primitive(&env, T_PRIM, "_if", prim_if);
   add_primitive(&env, T_PRIM, "+", prim_add);
   add_primitive(&env, T_PRIM, "-", prim_sub);
@@ -578,10 +602,11 @@ pointer take_args(pointer *stk)
 void run()
 {
   pointer stk, env, cnt, dmp;
-  pointer p;
+  pointer p, eval_cell;
 
   memory = mp = alloc_memory();
   env = init_env();
+  eval_cell = lookup(env, "eval");
   while ((p = parse_cell()) != NULL) {
     stk = nil;
     cnt = CONS3(p, c_stop, nil);
@@ -598,11 +623,11 @@ void run()
         pointer func     = CAR(stk);
         pointer args     = CAAR(dmp);
         pointer tail_cnt = CDAR(dmp);
-        assert(TYPE(func, T_CLOS | T_MACRO | T_PRIM));
+        assert(TYPE(func, T_CLOS | T_MACRO | T_PRIM | T_USRMACRO));
         if (TYPE(func, T_PRIM | T_CLOS)) {
           stk = CONS(c_argend, stk);
           cnt = append(args, CONS(c_call, tail_cnt));
-        } else if (TYPE(func, T_MACRO)) {
+        } else if (TYPE(func, T_MACRO | T_USRMACRO)) {
           stk = append(reverse(args), CONS(c_argend, stk));
           cnt = CONS(c_call, tail_cnt);
         }
@@ -623,6 +648,17 @@ void run()
           pointer binds   = zip(func->params, args);
           pointer cls_env = append(binds, func->env);
           pointer body    = CONS3(func->body, c_ret, nil);
+          dmp = CONS4(stk, env, cnt, dmp);
+          stk = nil;
+          env = cls_env;
+          cnt = body;
+        } else if (TYPE(func, T_USRMACRO)) {
+          // TODO: implement partial evaluation (when |func->params| > |args|)
+          pointer binds   = zip(func->params, args);
+          pointer cls_env = append(binds, func->env);
+          pointer body    = CONS3(func->body, c_ret, nil);
+          stk = CONS3(c_argend, eval_cell, stk);
+          cnt = CONS(c_call, cnt);
           dmp = CONS4(stk, env, cnt, dmp);
           stk = nil;
           env = cls_env;
