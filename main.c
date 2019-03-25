@@ -7,7 +7,7 @@
 #include <assert.h>
 #include <sys/mman.h>
 
-#define DEBUG 1
+#define DEBUG 0
 
 void error(char *fmt, ...)
 {
@@ -288,7 +288,7 @@ pointer reverse(pointer p)
 pointer append(pointer p, pointer q)
 {
   if (TYPE(p, T_NIL)) return q;
-  else CONS(CAR(p), append(CDR(p), q));
+  else return CONS(CAR(p), append(CDR(p), q));
 }
 
 pointer zip(pointer p, pointer q)
@@ -342,7 +342,6 @@ void macro_macro(pointer *stk,  pointer *env, pointer *cnt, pointer *dmp)
 void prim_eval(pointer *stk, pointer *env, pointer *cnt, pointer *dmp)
 {
   pointer arg = CAAR(*stk);
-  printf("expand: "); print_cell(arg);
   *stk = CDR(*stk);
   *cnt = CONS(arg, *cnt);
 }
@@ -522,14 +521,6 @@ pointer init_env()
   return env;
 }
 
-pointer insert_apps(pointer args, pointer last)
-{
-  if (TYPE(args, T_NIL))
-    return last;
-  else
-    return CONS3(CAR(args), c_call, insert_apps(CDR(args), last));
-}
-
 void debug_output(pointer stk, pointer env, pointer cnt, pointer dmp)
 {
 #if DEBUG
@@ -597,23 +588,16 @@ void run()
         if (TYPE(func, T_PRIM | T_MACRO)) {
           stk = CONS(args, stk);
           func->func(&stk, &env, &cnt, &dmp);
-        } else if (TYPE(func, T_CLOS)) {
+        } else if (TYPE(func, T_CLOS | T_USRMACRO)) {
           // TODO: implement partial evaluation (when |func->params| > |args|)
           pointer binds   = zip(func->params, args);
           pointer cls_env = append(binds, func->env);
           pointer body    = CONS3(func->body, c_ret, nil);
-          dmp = CONS4(stk, env, cnt, dmp);
-          stk = nil;
-          env = cls_env;
-          cnt = body;
-        } else if (TYPE(func, T_USRMACRO)) {
-          // TODO: implement partial evaluation (when |func->params| > |args|)
-          pointer binds   = zip(func->params, args);
-          pointer cls_env = append(binds, func->env);
-          pointer body    = CONS3(func->body, c_ret, nil);
-          stk = CONS3(c_argend, eval_cell, stk);
-          cnt = CONS(c_call, cnt);
-          dmp = CONS4(stk, env, cnt, dmp);
+          if (TYPE(func, T_CLOS)) {
+            dmp = CONS4(stk, env, cnt, dmp);
+          } else {// if TYPE(func, T_USRMACRO)
+            dmp = CONS4(CONS3(c_argend, eval_cell, stk), env, CONS(c_call, cnt), dmp);
+          }
           stk = nil;
           env = cls_env;
           cnt = body;
