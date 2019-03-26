@@ -28,6 +28,53 @@
 ; so that we have to wrap the identifier-part by "quote" to invoke it.
 ; For instance, "(_define x 123)" does not work since "x" is turned out to be unbound,
 ; and hence we need to write as "(_define (quote x) 123)" to record the value to "x".
+; ----
+
+; -- About "macro" --
+; Syntax: (macro (x1 x2 ... xn) body)
+; (Variadic representations (macro args body) and (macro (x1 ... xn . args) body) are also available)
+; 
+; Macro is one of first-class citizens in this calculus, and is designed analogously to
+; the closure of lambda abstraction (i.e., (lambda (x1 x2 ... xn) body)).
+;
+; The intuitive execution of the applicaiton ((macro (x1 x2 ... xn) body) e1 e2 ... en) is summarized as follows:
+; (1) First, the arguments e1, ..., en are passed to "body" with "quote" wrappings:
+;
+;     ((macro (x1 x2 ... xn) body) e1 e2 ... en)
+;     ~> body[x1 := (quote e1), x2 := (quote e2), ..., xn := (quote en)]
+;     ~> ...
+;     ~> body' (The result of the computation of "body[x1 := (quote e1), x2 := (quote e2), ..., xn := (quote en)]")
+;
+;     Note that the original arguments e1, ..., en are *not* evaluated in this stage.
+; (2) Then, the final value is obtaines as the result of application "eval" to "body'", i.e., as the following:
+;
+;     (eval body')
+;     ~> ...
+;     ~> value (The final result)
+; 
+; -- Example --
+; Macro-style K combinator, (macro (x y) x)
+;
+; Computation example: ((macro (x y) x) (print 42) (print 0))
+;
+; ((macro (x y) x) (print 42) (print 0))
+; ~> (eval (quote (print 42)))
+; ~> (eval '(print 42))
+; ~> (print 42) ~> ...
+; where the value of "(quote e)" is represented as "'e".
+;
+; Note that the argument "(print 0)" is not evaluated (there is no side effect by "(print 0)")
+;
+; -- Example --
+; A macro of user-defined "define", which will be used as "defvar" in the remaining program codes.
+; 
+; Computation example: ((macro (id e) (list (quote _define) (list (quote quote) id) e)) x 123)
+;
+; ((macro (id e) (list (quote _define) (list (quote quote) id) e)) x 123)
+; ~> (eval (list (quote _define) (list (quote quote) (quote x)) (quote 123)))
+; ~> (eval '(_define (quote x) 123))
+; ~> (_define (quote x) 123) ~> ...
+;
 ; -----
 
 (_define (quote list)
@@ -159,4 +206,13 @@
   (if (null? ls) null
       (if (null? (cdr ls)) (car ls)
           (last (cdr ls)))))
+
+; (begin
+;   (define x null)
+;   (set! x ((lambda (ret) (set! x ret)) (print 42)))
+;   (+ x x))
+
+; ((lazylambda (x) (+ x x)) (print 42))
+
+; (print (map (lambda (x) (* x x)) (iota 10)))
 
