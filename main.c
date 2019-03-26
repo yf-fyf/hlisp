@@ -152,26 +152,26 @@ void slist(pointer p)
 void sc(pointer p)
 {
   switch(p->type) {
-  case T_NIL:    printf("()");                         break;
-  case T_CLOS:   printf("#<closure>"); break;
-                 // printf("#<closure: (");
-                 // sc(p->params);
-                 // printf(", ");
-                 // sc(p->body);
-                 // printf(")>");
-                 break;
-  case T_IDENT:  printf("%s", p->ident);               break;
-  case T_DATA:   printf("%d", p->data);                break;
-  case T_CONS:   printf("("); slist(p); printf(")");   break;
-  case T_PRIM:   printf("#<primitive: %s>", p->ident); break;
-  case T_STOP:   printf("stop");                       break;
-  case T_CALL:   printf("call");                       break;
-  case T_BACK:   printf("back");                       break;
-  case T_RET:    printf("ret");                        break;
-  case T_MACRO:  printf("#<macro: %s>", p->ident);     break;
-  case T_ARGEND: printf("argend"); break;
+  case T_NIL:      printf("()");                         break;
+  case T_CLOS:     printf("#<closure>"); break;
+                   // printf("#<closure: (");
+                   // sc(p->params);
+                   // printf(", ");
+                   // sc(p->body);
+                   // printf(")>");
+                   break;
+  case T_IDENT:    printf("%s", p->ident);               break;
+  case T_DATA:     printf("%d", p->data);                break;
+  case T_CONS:     printf("("); slist(p); printf(")");   break;
+  case T_PRIM:     printf("#<primitive: %s>", p->ident); break;
+  case T_STOP:     printf("stop");                       break;
+  case T_CALL:     printf("call");                       break;
+  case T_BACK:     printf("back");                       break;
+  case T_RET:      printf("ret");                        break;
+  case T_MACRO:    printf("#<macro: %s>", p->ident);     break;
+  case T_ARGEND:   printf("argend"); break;
   case T_USRMACRO: printf("#<usrmacro>"); break;
-  default:       error("Undefined type: %d", p->type);
+  default:         error("Undefined type: %d", p->type);
   }
 }
 
@@ -293,12 +293,20 @@ pointer append(pointer p, pointer q)
 
 pointer zip(pointer p, pointer q)
 {
-  // p and q are supposed to have the same length.
   pointer ret = nil;
-  while (!TYPE(p, T_NIL)) {
-    ret = CONS(CONS(CAR(p), CAR(q)), ret);
-    p = CDR(p);
-    q = CDR(q);
+  for (;;) {
+    if (TYPE(p, T_NIL)) {
+      break;
+    } else if (TYPE(p, T_IDENT)) {// For a variadic parameter
+      ret = CONS(CONS(p, q), ret);
+      break;
+    } else if (TYPE(p, T_CONS)) {
+      ret = CONS(CONS(CAR(p), CAR(q)), ret);
+      p = CDR(p);
+      q = CDR(q);
+    } else {
+      error("Invalid parameter: %d", p->type);
+    }
   }
   return reverse(ret);
 }
@@ -326,7 +334,7 @@ void add_primitive(pointer *env, int type, char *ident, primitive_func func)
 void macro_lambda(pointer *stk,  pointer *env, pointer *cnt, pointer *dmp)
 {
   pointer params = CAAR(*stk);
-  pointer body   = CADAR(*stk);
+  pointer body   = CONS(make_ident("begin"), CDAR(*stk));
   pointer cls = make_closure(*env, params, body);
   *stk = CONS(cls, CDR(*stk));
 }
@@ -334,7 +342,7 @@ void macro_lambda(pointer *stk,  pointer *env, pointer *cnt, pointer *dmp)
 void macro_macro(pointer *stk,  pointer *env, pointer *cnt, pointer *dmp)
 {
   pointer params = CAAR(*stk);
-  pointer body   = CADAR(*stk);
+  pointer body   = CONS(make_ident("begin"), CDAR(*stk));
   pointer cls = make_user_macro(*env, params, body);
   *stk = CONS(cls, CDR(*stk));
 }
@@ -344,12 +352,13 @@ void prim_eval(pointer *stk, pointer *env, pointer *cnt, pointer *dmp)
   pointer arg = CAAR(*stk);
   *stk = CDR(*stk);
   *cnt = CONS(arg, *cnt);
+  // printf("Eval: "); print_cell(arg);
 }
 
 void prim_print(pointer *stk, pointer *env, pointer *cnt, pointer *dmp)
 {
-  pointer ret = nil; 
-  for (pointer args = CAR(*stk); args != nil; args = CDR(args))
+  pointer args, ret;
+  for (args = CAR(*stk), ret = nil; args != nil; args = CDR(args))
     print_cell(ret = CAR(args));
   *stk = CONS(ret, CDR(*stk));
 }
@@ -387,18 +396,12 @@ void prim_cdr(pointer *stk, pointer *env, pointer *cnt, pointer *dmp)
   *stk = CONS(CDR(arg), CDR(*stk));
 }
 
-void prim_list(pointer *stk, pointer *env, pointer *cnt, pointer *dmp)
-{
-  // Do nothing, since the arguments are already pushed to "*stk".
-}
-
 void prim_gensym(pointer *stk, pointer *env, pointer *cnt, pointer *dmp)
 {
   static int id = 0;
   char ident[MAX_LEN];
   sprintf(ident, "_G%03d", id++);
   *stk = CONS(make_ident(ident), CDR(*stk));
-  print_cell(*stk);
 }
 
 pointer set(pointer *env, char *ident, pointer value)
@@ -476,7 +479,7 @@ void prim_mod(pointer *stk, pointer *env, pointer *cnt, pointer *dmp)
 {
   prim_bin(stk, env, cnt, dmp, bin_mod);
 }
-void prim_arith_eq(pointer *stk, pointer *env, pointer *cnt, pointer *dmp)
+void prim_eq(pointer *stk, pointer *env, pointer *cnt, pointer *dmp)
 {
   prim_bin(stk, env, cnt, dmp, bin_eq);
 }
@@ -485,12 +488,18 @@ void prim_lt(pointer *stk, pointer *env, pointer *cnt, pointer *dmp)
   prim_bin(stk, env, cnt, dmp, bin_lt);
 }
 
-void prim_eq(pointer *stk, pointer *env, pointer *cnt, pointer *dmp)
+void prim_eqp(pointer *stk, pointer *env, pointer *cnt, pointer *dmp)
 {
   pointer args = CAR(*stk);
   pointer a1 = CAR(args);
   pointer a2 = CADR(args);
   *stk = CONS(make_data(a1==a2?1:0), CDR(*stk));
+}
+
+void prim_pairp(pointer *stk, pointer *env, pointer *cnt, pointer *dmp)
+{
+  pointer arg = CAAR(*stk);
+  *stk = CONS(make_data(TYPE(arg, T_CONS)?1:0), CDR(*stk));
 }
 
 pointer init_env()
@@ -505,7 +514,6 @@ pointer init_env()
   add_primitive(&env, T_PRIM, "cons", prim_cons);
   add_primitive(&env, T_PRIM, "car", prim_car);
   add_primitive(&env, T_PRIM, "cdr", prim_cdr);
-  add_primitive(&env, T_PRIM, "list", prim_list);
   add_primitive(&env, T_PRIM, "gensym", prim_gensym);
   add_primitive(&env, T_PRIM, "_set!", prim_set);
   add_primitive(&env, T_PRIM, "begin", prim_begin);
@@ -515,9 +523,10 @@ pointer init_env()
   add_primitive(&env, T_PRIM, "*", prim_mul);
   add_primitive(&env, T_PRIM, "/", prim_div);
   add_primitive(&env, T_PRIM, "%", prim_mod);
-  add_primitive(&env, T_PRIM, "=", prim_arith_eq);
+  add_primitive(&env, T_PRIM, "=", prim_eq);
   add_primitive(&env, T_PRIM, "<", prim_lt);
-  add_primitive(&env, T_PRIM, "eq?", prim_eq);
+  add_primitive(&env, T_PRIM, "eq?", prim_eqp);
+  add_primitive(&env, T_PRIM, "pair?", prim_pairp);
   return env;
 }
 
@@ -589,15 +598,19 @@ void run()
           stk = CONS(args, stk);
           func->func(&stk, &env, &cnt, &dmp);
         } else if (TYPE(func, T_CLOS | T_USRMACRO)) {
-          // TODO: implement partial evaluation (when |func->params| > |args|)
-          pointer binds   = zip(func->params, args);
-          pointer cls_env = append(binds, func->env);
-          pointer body    = CONS3(func->body, c_ret, nil);
-          if (TYPE(func, T_CLOS)) {
-            dmp = CONS4(stk, env, cnt, dmp);
-          } else {// if TYPE(func, T_USRMACRO)
-            dmp = CONS4(CONS3(c_argend, eval_cell, stk), env, CONS(c_call, cnt), dmp);
+          pointer cls_env, body; 
+          if (TYPE(func->params, T_IDENT)) {// If the closure is a variadic function
+            pointer bind = CONS(func->params, args);
+            cls_env = CONS(bind, func->env);
+          } else {
+            pointer binds = zip(func->params, args);
+            cls_env = append(binds, func->env);
           }
+          body = CONS3(func->body, c_ret, nil);
+          if (TYPE(func, T_CLOS))
+            dmp = CONS4(stk, env, cnt, dmp);
+          else if (TYPE(func, T_USRMACRO))
+            dmp = CONS4(CONS3(c_argend, eval_cell, stk), env, CONS(c_call, cnt), dmp);
           stk = nil;
           env = cls_env;
           cnt = body;
