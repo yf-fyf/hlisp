@@ -184,7 +184,7 @@ char lex()
   char c = getchar();
   if (c == ';') {
     do {
-      c = getchar();
+      c = getchar(); // skip a line comment
     } while (c != EOF && c != '\n');
   }
   return c;
@@ -192,8 +192,10 @@ char lex()
 
 char space_lex()
 {
-  char c = lex();
-  return isspace(c)?space_lex():c;
+  char c;
+  while (isspace(c = lex()))
+    ;
+  return c;
 }
 
 void unlex(char c)
@@ -271,16 +273,14 @@ pointer parse_cell()
     } else if (isident(c)) {
       char *ident = read_ident(c);
       {// For reader macro
-        pointer p = renv;
+        pointer p, macro, rest;
+        char *pos, *postfix;
+        p = renv;
         while (!TYPE(p, T_NIL)) {
-          pointer macro = CAR(p);
-          char *pos = strstr(ident, CAR(macro)->ident);
+          macro = CAR(p);
+          pos = strstr(ident, CAR(macro)->ident);
           if (pos != NULL) {
-            int len;
-            pointer rest;
-            char *postfix;
-            len = strlen(CAR(macro)->ident);
-            postfix = strrev(ident+len);
+            postfix = strrev(ident+strlen(CAR(macro)->ident));
             while (*postfix != '\0')
               unlex(*(postfix++));
             rest = parse_cell(); 
@@ -314,8 +314,12 @@ pointer reverse(pointer p)
 
 pointer append(pointer p, pointer q)
 {
-  if (TYPE(p, T_NIL)) return q;
-  else return CONS(CAR(p), append(CDR(p), q));
+  p = reverse(p);
+  while (!TYPE(p, T_NIL)) {
+    q = CONS(CAR(p), q);
+    p = CDR(p);
+  }
+  return q;
 }
 
 pointer zip(pointer p, pointer q)
@@ -342,12 +346,13 @@ pointer eval(pointer *env, pointer p);
  
 pointer lookup(pointer env, char *ident)
 {
-  if (TYPE(env, T_NIL))
-    return make_ident("Error: unbound variable");
-  else {
-    bool eq = strcmp(CAAR(env)->ident, ident) == 0;
-    return eq?CDAR(env):lookup(CDR(env), ident);
+  while (!TYPE(env, T_NIL)) {
+    if (strcmp(CAAR(env)->ident, ident) == 0)
+      return CDAR(env);
+    else
+      env = CDR(env);
   }
+  error("Unbound variable: \"%s\"", ident);
 }
 
 void add_primitive(pointer *env, int type, char *ident, primitive_func func)
@@ -444,14 +449,15 @@ void prim_gensym(pointer *stk, pointer *env, pointer *cnt, pointer *dmp)
   *stk = CONS(make_ident(ident), CDR(*stk));
 }
 
-pointer set(pointer *env, char *ident, pointer value)
+pointer set(pointer env, char *ident, pointer value)
 {
-  if (TYPE(*env, T_NIL))
-    return make_ident("Error: unbound variable");
-  else {
-    bool eq = strcmp(CAAR(*env)->ident, ident) == 0;
-    return eq?(CDAR(*env) = value):set(&CDR(*env), ident, value);
+  pointer p = env;
+  while (!TYPE(p, T_NIL)) {
+    if (strcmp(CAAR(p)->ident, ident) == 0)
+      return (CDAR(p) = value);
+    p = CDR(p);
   }
+  error("Unbound variable: \"%s\"", ident);
 }
 
 void prim_set(pointer *stk, pointer *env, pointer *cnt, pointer *dmp)
@@ -459,7 +465,7 @@ void prim_set(pointer *stk, pointer *env, pointer *cnt, pointer *dmp)
   pointer args  = CAR(*stk);  
   pointer ident = CAR(args);
   pointer value = CADR(args);
-  pointer ret   = set(env, ident->ident, value);
+  pointer ret   = set(*env, ident->ident, value);
   *stk = CONS(ret, CDR(*stk));
 }
 
@@ -540,7 +546,6 @@ void prim_pairp(pointer *stk, pointer *env, pointer *cnt, pointer *dmp)
 {
   pointer arg = CAAR(*stk);
   *stk = CONS(make_data(TYPE(arg, T_CONS)?1:0), CDR(*stk));
-
 }
 
 pointer init_env()
@@ -595,6 +600,67 @@ pointer take_args(pointer *stk)
   return args;
 } 
 
+
+//--------------------------------------------
+//
+// Transition rule of Exntended SECD Machine
+//
+//--------------------------------------------
+// Case: T_STOP
+//   < S, E, stop, D > -/->
+//
+//   Remark: This means that evaluation is completed.
+//           The final value is in the top 
+//
+// Case: Value (T_NIL | T_DATA | T_CLOS | T_USRMACRO)
+//   < S, E, (v . C), D >
+//   -> < (v . S), E, C, D >
+//
+// Case: T_CONS
+//   < S, E, ((e1 e2 ... en) . C), D >
+//   -> < S, E, (e1 c_back), (((e2 ... en) . C) . D)>
+//   Remark: We focus on the computation of the head (i.e., e1),
+//           because the remaining computation depends on two cases:
+//           (1) e2 ... en will be evaluated if e1 reduces to a function;
+//           (2) e2 ... en will not be evaluated if e1 reduces to a macro.
+//
+// Case: T_BACK
+//   Subcase: When the top of stack, v1, is #<primitive> or #<closure>.
+//   < (v1 . S), E, (back . nil), (((e2 ... en) . C). D) >
+//   -> < (c_argend . S), E, (e2 .. en c_call C), D >   if v1 is #<primitive> or #<closure>
+//   Remark: The arguments must be evaluated so that we push e2 .. en to cnt-part.
+//
+//   Subcase: When the top of stack, v1, is #<macro> or #<usrmacro>.
+//   < (v1 . S), E, (back . nil), (((e2 ... en) . C). D) >
+//   -> < (en .. e2 c_argend S), E, (c_call . C), D >   if v1 is #<macro> or #<usrmacro>
+//   Remark: The arguments must *not* be evaluated so that we push e2 .. en to stk-part immediately.
+//
+// Case: T_CALL
+//   Subcase: If u is #<primitive>
+//     < (vn ... v1 c_argend u S), E, (c_call . C), D >
+//     -> < S', E', C', D' >
+//     where S', E', C', and D' are the result of the primitive function call.
+//
+//   Subcase: If u is #<macro>
+//     < (en ... e1 c_argend u S), E, (c_call . C), D >
+//     -> < S', E', C', D' >
+//
+//   Subcase: If u is #<closure> (we omit the case of variadic functions)
+//     Suppose that "u" is the colosure of (lambda (x1 ... xn) body) 
+//     with E' which is its closure environment. Then,
+//     < (vn ... v1 c_argend u S), E, (c_call . C), D >
+//     -> < nil, ( (x1 . v1) (x2 . v2) ... (xn . vn) E' ), (body c_ret), (S E C D)>
+//
+//   Subcase: If u is #<macro> (we omit the case of variadic macros)
+//     Suppose that "u" is the colosure of (macro (x1 ... xn) body) 
+//     with E' which is its closure environment. Then,
+//     < (en ... e1 c_argend u S), E, (c_call . C), D >
+//     -> < nil, ( (x1 . e1) (x2 . e2) ... (xn . en) E' ), (body c_ret), ((c_argend #<primitive: eval> S) E (c_call . C) D)>
+//
+// Case: T_RET
+//   < (v . S), E, (c_ret . nil), (S' E' C' D')>
+//   -> < (v . S'), E', C', D' >
+//---------------------------------------------
 void run()
 {
   pointer stk, env, cnt, dmp;
@@ -611,12 +677,15 @@ void run()
     dmp = nil;
     debug_output(stk, env, cnt, dmp);
     while (!TYPE((p = CAR(cnt)), T_STOP)) {
-      if (TYPE(p, T_NIL | T_DATA | T_CLOS)) {
+      if (TYPE(p, T_NIL | T_DATA | T_CLOS | T_USRMACRO)) {
         stk = CONS(p, stk);
         cnt = CDR(cnt);
       } else if (TYPE(p, T_IDENT)) {
         stk = CONS(lookup(env, p->ident), stk);
         cnt = CDR(cnt);
+      } else if (TYPE(p, T_CONS)) {
+        dmp = CONS(CONS(CDR(p), CDR(cnt)), dmp);
+        cnt = CONS3(CAR(p), c_back, nil);
       } else if (TYPE(p, T_BACK)) {
         pointer func     = CAR(stk);
         pointer args     = CAAR(dmp);
@@ -630,9 +699,6 @@ void run()
           cnt = CONS(c_call, tail_cnt);
         }
         dmp = CDR(dmp);
-      } else if (TYPE(p, T_CONS)) {
-        dmp = CONS(CONS(CDR(p), CDR(cnt)), dmp);
-        cnt = CONS3(CAR(p), c_back, nil);
       } else if (TYPE(p, T_CALL)) {
         pointer args = take_args(&stk);
         pointer func = CAR(stk);
