@@ -123,13 +123,18 @@
   (if (pair? ls) (cons (quote defun) (cons (car ls) (cons (cdr ls) e)))
                  (list (quote defvar) ls (car e))))
 
-(_add-reader-macro ' quote)
+; (_add-reader-macro (quote ') quote)
 
 (define null ())
 (define (null? x) (eq? x null))
 (define (atom? x) (not (pair? x)))
 (define (_ n) (- 0 n))
 (define (not x) (if x 0 1))
+
+(define-macro (add-reader-macro id e)
+  (list (quote _add-reader-macro) (list (quote quote) id) e))
+
+(add-reader-macro ' quote)
 
 (define-macro (and x y)
   ; `(if ,x (if ,y 1 0) 0)
@@ -175,20 +180,27 @@
 (define (cddddr x) (cdr (cdr (cdr (cdr x)))))
 
 (define (iota n)
-  (define (iota0 i)
+  (define (rec i)
     (if (> i n) null
-        (cons i (iota0 (+ i 1)))))
-  (iota0 0))
+        (cons i (rec (+ i 1)))))
+  (rec 0))
 
 (define (map f ls)
   (if (null? ls) null
       (cons (f (car ls)) (map f (cdr ls)))))
 
 (define (reverse ls)
-  (define (reverse0 ls acc)
+  (define (rec ls acc)
       (if (null? ls) acc
-          (reverse0 (cdr ls) (cons (car ls) acc))))
-  (reverse0 ls null))
+          (rec (cdr ls) (cons (car ls) acc))))
+  (rec ls null))
+
+(define (append ls1 ls2)
+  (define (rec ls1 acc)
+    (if (null? ls1) acc
+        (rec (cdr ls1) (cons (car ls1) acc))))
+  (rec (reverse ls1) ls2))
+
 
 (define (filter f ls)
   (define (filter0 ls acc)

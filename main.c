@@ -416,7 +416,7 @@ void prim_define(pointer *stk, pointer *env, pointer *cnt, pointer *dmp)
   *env = CONS(bind, *env);
 }
 
-void macro_add_reader_macro(pointer *stk, pointer *env, pointer *cnt, pointer *dmp)
+void prim_add_reader_macro(pointer *stk, pointer *env, pointer *cnt, pointer *dmp)
 {
   pointer args = CAR(*stk);
   add_reader_macro(CAR(args), CADR(args));
@@ -557,7 +557,7 @@ pointer init_env()
   add_primitive(&env, T_PRIM, "print", prim_print);
   add_primitive(&env, T_MACRO, "quote", macro_quote);
   add_primitive(&env, T_PRIM, "_define", prim_define);
-  add_primitive(&env, T_MACRO, "_add-reader-macro", macro_add_reader_macro);
+  add_primitive(&env, T_PRIM, "_add-reader-macro", prim_add_reader_macro);
   add_primitive(&env, T_PRIM, "cons", prim_cons);
   add_primitive(&env, T_PRIM, "car", prim_car);
   add_primitive(&env, T_PRIM, "cdr", prim_cdr);
@@ -683,7 +683,7 @@ void run()
     dmp = nil;
     debug_output(stk, env, cnt, dmp);
     while (!TYPE((p = CAR(cnt)), T_STOP)) {
-      if (TYPE(p, T_NIL | T_DATA | T_CLOS | T_USRMACRO)) {
+      if (TYPE(p, T_NIL | T_DATA | T_CLOS | T_USRMACRO | T_PRIM | T_MACRO)) {
         stk = CONS(p, stk);
         cnt = CDR(cnt);
       } else if (TYPE(p, T_IDENT)) {
