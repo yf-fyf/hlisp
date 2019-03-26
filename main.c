@@ -600,7 +600,6 @@ pointer take_args(pointer *stk)
   return args;
 } 
 
-
 //--------------------------------------------
 //
 // Transition rule of Exntended SECD Machine
@@ -609,8 +608,8 @@ pointer take_args(pointer *stk)
 // Case: T_STOP
 //   < S, E, stop, D > -/->
 //
-//   Remark: This means that evaluation is completed.
-//           The final value is in the top 
+//   Remark: This means that whole evaluation of a s-exp is completed.
+//           The final value is in the top of S.
 //
 // Case: Value (T_NIL | T_DATA | T_CLOS | T_USRMACRO)
 //   < S, E, (v . C), D >
@@ -628,22 +627,29 @@ pointer take_args(pointer *stk)
 //   Subcase: When the top of stack, v1, is #<primitive> or #<closure>.
 //   < (v1 . S), E, (back . nil), (((e2 ... en) . C). D) >
 //   -> < (c_argend . S), E, (e2 .. en c_call C), D >   if v1 is #<primitive> or #<closure>
-//   Remark: The arguments must be evaluated so that we push e2 .. en to cnt-part.
+//   Remark: The arguments must be evaluated so that
+//           we push e2 .. en to cnt-part.
 //
 //   Subcase: When the top of stack, v1, is #<macro> or #<usrmacro>.
-//   < (v1 . S), E, (back . nil), (((e2 ... en) . C). D) >
-//   -> < (en .. e2 c_argend S), E, (c_call . C), D >   if v1 is #<macro> or #<usrmacro>
-//   Remark: The arguments must *not* be evaluated so that we push e2 .. en to stk-part immediately.
+//     < (v1 . S), E, (back . nil), (((e2 ... en) . C). D) >
+//     -> < (en .. e2 c_argend S), E, (c_call . C), D >   if v1 is #<macro> or #<usrmacro>
+//   Remark: The arguments must *not* be evaluated so that
+//           we push e2 .. en to stk-part immediately.
 //
 // Case: T_CALL
 //   Subcase: If u is #<primitive>
 //     < (vn ... v1 c_argend u S), E, (c_call . C), D >
+//     -> < ((v1 ... vn) . S), E, C, D >
+//     -> ... the execution by #<primitive> ...
 //     -> < S', E', C', D' >
 //     where S', E', C', and D' are the result of the primitive function call.
 //
 //   Subcase: If u is #<macro>
 //     < (en ... e1 c_argend u S), E, (c_call . C), D >
+//     -> < ((e1 ... en) . S), E, C, D >
+//     -> ... the execution by #<macro> ...
 //     -> < S', E', C', D' >
+//     where S', E', C', and D' are the result of the primitive macro call.
 //
 //   Subcase: If u is #<closure> (we omit the case of variadic functions)
 //     Suppose that "u" is the colosure of (lambda (x1 ... xn) body) 
