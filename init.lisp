@@ -60,7 +60,7 @@
 ; ((macro (x y) x) (print 42) (print 0))
 ; ~> (eval (quote (print 42)))
 ; ~> (eval '(print 42))
-; ~> (print 42) ~> ...
+; ~> (print 42) ~> ... ~> 42 (with the side effect of printing "42")
 ; where the value of "(quote e)" is represented as "'e".
 ;
 ; Note that the argument "(print 0)" is not evaluated (there is no side effect by "(print 0)")
@@ -72,8 +72,9 @@
 ;
 ; ((macro (id e) (list (quote _define) (list (quote quote) id) e)) x 123)
 ; ~> (eval (list (quote _define) (list (quote quote) (quote x)) (quote 123)))
+; ~> ...
 ; ~> (eval '(_define (quote x) 123))
-; ~> (_define (quote x) 123) ~> ...
+; ~> (_define (quote x) 123) ~> ... ~> 123 (with the side effect of recording the value "123" to "x") 
 ;
 ; -----
 
@@ -206,13 +207,4 @@
   (if (null? ls) null
       (if (null? (cdr ls)) (car ls)
           (last (cdr ls)))))
-
-; (begin
-;   (define x null)
-;   (set! x ((lambda (ret) (set! x ret)) (print 42)))
-;   (+ x x))
-
-; ((lazylambda (x) (+ x x)) (print 42))
-
-; (print (map (lambda (x) (* x x)) (iota 10)))
 
