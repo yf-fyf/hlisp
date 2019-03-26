@@ -89,6 +89,8 @@ pointer alloc_memory()
 
 pointer nil = &(cell){ T_NIL  };
 
+pointer renv; // environment for reader macro
+
 pointer c_stop    = &(cell){ T_STOP  };
 pointer c_call    = &(cell){ T_CALL };
 pointer c_back    = &(cell){ T_BACK };
@@ -153,13 +155,7 @@ void sc(pointer p)
 {
   switch(p->type) {
   case T_NIL:      printf("()");                         break;
-  case T_CLOS:     printf("#<closure>"); break;
-                   // printf("#<closure: (");
-                   // sc(p->params);
-                   // printf(", ");
-                   // sc(p->body);
-                   // printf(")>");
-                   break;
+  case T_CLOS:     printf("#<closure>");                 break;
   case T_IDENT:    printf("%s", p->ident);               break;
   case T_DATA:     printf("%d", p->data);                break;
   case T_CONS:     printf("("); slist(p); printf(")");   break;
@@ -169,8 +165,8 @@ void sc(pointer p)
   case T_BACK:     printf("back");                       break;
   case T_RET:      printf("ret");                        break;
   case T_MACRO:    printf("#<macro: %s>", p->ident);     break;
-  case T_ARGEND:   printf("argend"); break;
-  case T_USRMACRO: printf("#<usrmacro>"); break;
+  case T_ARGEND:   printf("argend");                     break;
+  case T_USRMACRO: printf("#<usrmacro>");                break;
   default:         error("Undefined type: %d", p->type);
   }
 }
@@ -255,6 +251,17 @@ pointer parse_list()
   }
 }
 
+char *strrev(char *str)
+{
+  int i, len = strlen(str);
+  for (i = 0; i < len/2; i++) {
+    char tmp = str[i];
+    str[i] = str[len-i-1];
+    str[len-i-1] = tmp;
+  }
+  return str;
+}
+
 pointer parse_cell()
 {
   char c;
@@ -262,7 +269,27 @@ pointer parse_cell()
     if (isdigit(c)) {
       return make_data(read_num(c));
     } else if (isident(c)) {
-      return make_ident(read_ident(c));
+      char *ident = read_ident(c);
+      {// For reader macro
+        pointer p = renv;
+        while (!TYPE(p, T_NIL)) {
+          pointer macro = CAR(p);
+          char *pos = strstr(ident, CAR(macro)->ident);
+          if (pos != NULL) {
+            int len;
+            pointer rest;
+            char *postfix;
+            len = strlen(CAR(macro)->ident);
+            postfix = strrev(ident+len);
+            while (*postfix != '\0')
+              unlex(*(postfix++));
+            rest = parse_cell(); 
+            return CONS3(CDR(macro), rest, nil);
+          }
+          p = CDR(p);
+        }
+      }
+      return make_ident(ident);
     } else if (c == '(') {
       if ((c = space_lex()) == ')')
         return nil;
@@ -347,6 +374,12 @@ void macro_macro(pointer *stk,  pointer *env, pointer *cnt, pointer *dmp)
   *stk = CONS(cls, CDR(*stk));
 }
 
+void add_reader_macro(pointer ident, pointer value)
+{
+  pointer bind = CONS(ident, value);
+  renv = CONS(bind, renv);
+}
+
 void prim_eval(pointer *stk, pointer *env, pointer *cnt, pointer *dmp)
 {
   pointer arg = CAAR(*stk);
@@ -376,6 +409,13 @@ void prim_define(pointer *stk, pointer *env, pointer *cnt, pointer *dmp)
   pointer bind  = CONS(ident, value);
   *stk = CONS(value, CDR(*stk));
   *env = CONS(bind, *env);
+}
+
+void macro_add_reader_macro(pointer *stk, pointer *env, pointer *cnt, pointer *dmp)
+{
+  pointer args = CAR(*stk);
+  add_reader_macro(CAR(args), CADR(args));
+  *stk = CDR(*stk);
 }
 
 void prim_cons(pointer *stk, pointer *env, pointer *cnt, pointer *dmp)
@@ -500,6 +540,7 @@ void prim_pairp(pointer *stk, pointer *env, pointer *cnt, pointer *dmp)
 {
   pointer arg = CAAR(*stk);
   *stk = CONS(make_data(TYPE(arg, T_CONS)?1:0), CDR(*stk));
+
 }
 
 pointer init_env()
@@ -511,6 +552,7 @@ pointer init_env()
   add_primitive(&env, T_PRIM, "print", prim_print);
   add_primitive(&env, T_MACRO, "quote", macro_quote);
   add_primitive(&env, T_PRIM, "_define", prim_define);
+  add_primitive(&env, T_MACRO, "_add-reader-macro", macro_add_reader_macro);
   add_primitive(&env, T_PRIM, "cons", prim_cons);
   add_primitive(&env, T_PRIM, "car", prim_car);
   add_primitive(&env, T_PRIM, "cdr", prim_cdr);
@@ -559,6 +601,8 @@ void run()
   pointer p, eval_cell;
 
   memory = mp = alloc_memory();
+  renv = nil;
+
   env = init_env();
   eval_cell = lookup(env, "eval");
   while ((p = parse_cell()) != NULL) {

@@ -5,6 +5,7 @@
 ; print
 ; quote
 ; _define
+; _add-reader-macro
 ; cons
 ; car
 ; cdr
@@ -27,7 +28,7 @@
 ; The primitive "_define" evaluates given arguments strictly, 
 ; so that we have to wrap the identifier-part by "quote" to invoke it.
 ; For instance, "(_define x 123)" does not work since "x" is turned out to be unbound,
-; and hence we need to write as "(_define (quote x) 123)" to record the value to "x".
+; and hence we need to write "(_define (quote x) 123)" to record the value to "x".
 ; ----
 
 ; -- About "macro" --
@@ -43,20 +44,20 @@
 ;     ((macro (x1 x2 ... xn) body) e1 e2 ... en)
 ;     ~> body[x1 := (quote e1), x2 := (quote e2), ..., xn := (quote en)]
 ;     ~> ...
-;     ~> body' (The result of the computation of "body[x1 := (quote e1), x2 := (quote e2), ..., xn := (quote en)]")
+;     ~> body' ; The result of the computation of "body[x1 := (quote e1), x2 := (quote e2), ..., xn := (quote en)]"
 ;
 ;     Note that the original arguments e1, ..., en are *not* evaluated in this stage.
+;
 ; (2) Then, the final value is obtaines as the result of application "eval" to "body'", i.e., as the following:
 ;
 ;     (eval body')
 ;     ~> ...
-;     ~> value (The final result)
+;     ~> value ; The final result
 ; 
 ; -- Example --
 ; Macro-style K combinator, (macro (x y) x)
 ;
 ; Computation example: ((macro (x y) x) (print 42) (print 0))
-;
 ; ((macro (x y) x) (print 42) (print 0))
 ; ~> (eval (quote (print 42)))
 ; ~> (eval '(print 42))
@@ -66,16 +67,15 @@
 ; Note that the argument "(print 0)" is not evaluated (there is no side effect by "(print 0)")
 ;
 ; -- Example --
-; A macro of user-defined "define", which will be used as "defvar" in the remaining program codes.
+; A macro of user-defined "define", which will be used as "defvar" in the remaining program codes,
+; (macro (id e) (list (quote _define) (list (quote quote) id) e))
 ; 
 ; Computation example: ((macro (id e) (list (quote _define) (list (quote quote) id) e)) x 123)
-;
 ; ((macro (id e) (list (quote _define) (list (quote quote) id) e)) x 123)
 ; ~> (eval (list (quote _define) (list (quote quote) (quote x)) (quote 123)))
 ; ~> ...
 ; ~> (eval '(_define (quote x) 123))
 ; ~> (_define (quote x) 123) ~> ... ~> 123 (with the side effect of recording the value "123" to "x") 
-;
 ; -----
 
 (_define (quote list)
@@ -123,6 +123,8 @@
   (if (pair? ls) (cons (quote defun) (cons (car ls) (cons (cdr ls) e)))
                  (list (quote defvar) ls (car e))))
 
+(_add-reader-macro ' quote)
+
 (define null ())
 (define (null? x) (eq? x null))
 (define (atom? x) (not (pair? x)))
@@ -131,13 +133,13 @@
 
 (define-macro (and x y)
   ; `(if ,x (if ,y 1 0) 0)
-  (list (quote if) x
-        (list (quote if) y 1 0) 0))
+  (list 'if x
+        (list 'if y 1 0) 0))
 
 (define-macro (or x y)
   ; `(if ,x 1 (if ,y 1 0))
-  (list (quote if) x 1
-        (list (quote if) y 1 0)))
+  (list 'if x 1
+        (list 'if y 1 0)))
 
 (define (<= x y) (or (< x y) (= x y)))
 (define (> x y) (< y x))
