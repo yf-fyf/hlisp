@@ -84,18 +84,23 @@ pointer memory, mp;
 
 pointer alloc_memory()
 {
-  return mmap(NULL, MEMORY_SIZE, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+  return malloc(MEMORY_SIZE);
 }
 
 pointer nil = &(cell){ T_NIL  };
 
-pointer renv; // environment for reader macro
+pointer renv;      // environment for reader macro
+pointer eval_cell; // for eval call during evaluation of user macros
 
 pointer c_stop    = &(cell){ T_STOP  };
 pointer c_call    = &(cell){ T_CALL };
 pointer c_back    = &(cell){ T_BACK };
 pointer c_ret     = &(cell){ T_RET  };
 pointer c_argend  = &(cell){ T_ARGEND };
+
+void gc()
+{
+}
 
 pointer mk(cell tmp)
 {
@@ -379,7 +384,7 @@ void macro_macro(pointer *stk,  pointer *env, pointer *cnt, pointer *dmp)
   *stk = CONS(cls, CDR(*stk));
 }
 
-void add_reader_macro(pointer ident, pointer value)
+void def_reader_macro(pointer ident, pointer value)
 {
   pointer bind = CONS(ident, value);
   renv = CONS(bind, renv);
@@ -416,10 +421,10 @@ void prim_define(pointer *stk, pointer *env, pointer *cnt, pointer *dmp)
   *env = CONS(bind, *env);
 }
 
-void prim_add_reader_macro(pointer *stk, pointer *env, pointer *cnt, pointer *dmp)
+void prim_def_reader_macro(pointer *stk, pointer *env, pointer *cnt, pointer *dmp)
 {
   pointer args = CAR(*stk);
-  add_reader_macro(CAR(args), CADR(args));
+  def_reader_macro(CAR(args), CADR(args));
   *stk = CDR(*stk);
 }
 
@@ -557,7 +562,7 @@ pointer init_env()
   add_primitive(&env, T_PRIM, "print", prim_print);
   add_primitive(&env, T_MACRO, "quote", macro_quote);
   add_primitive(&env, T_PRIM, "_define", prim_define);
-  add_primitive(&env, T_PRIM, "_add-reader-macro", prim_add_reader_macro);
+  add_primitive(&env, T_PRIM, "_def-reader-macro", prim_def_reader_macro);
   add_primitive(&env, T_PRIM, "cons", prim_cons);
   add_primitive(&env, T_PRIM, "car", prim_car);
   add_primitive(&env, T_PRIM, "cdr", prim_cdr);
@@ -606,18 +611,18 @@ pointer take_args(pointer *stk)
 //
 //--------------------------------------------
 // Case: T_STOP
-//   < S, E, stop, D > -/->
+//   < S, E, stop, D > =/=>
 //
 //   Remark: This means that whole evaluation of a s-exp is completed.
 //           The final value is in the top of S.
 //
 // Case: Value (T_NIL | T_DATA | T_CLOS | T_USRMACRO)
 //   < S, E, (v . C), D >
-//   -> < (v . S), E, C, D >
+//   => < (v . S), E, C, D >
 //
 // Case: T_CONS
 //   < S, E, ((e1 e2 ... en) . C), D >
-//   -> < S, E, (e1 c_back), (((e2 ... en) . C) . D)>
+//   => < S, E, (e1 c_back), (((e2 ... en) . C) . D)>
 //   Remark: We focus on the computation of the head (i.e., e1),
 //           because the remaining computation depends on two cases:
 //           (1) e2 ... en will be evaluated if e1 reduces to a function;
@@ -626,56 +631,129 @@ pointer take_args(pointer *stk)
 // Case: T_BACK
 //   Subcase: When the top of stack, v1, is #<primitive> or #<closure>.
 //   < (v1 . S), E, (back . nil), (((e2 ... en) . C). D) >
-//   -> < (c_argend . S), E, (e2 .. en c_call C), D >   if v1 is #<primitive> or #<closure>
+//   => < (c_argend . S), E, (e2 .. en c_call C), D >   if v1 is #<primitive> or #<closure>
 //   Remark: The arguments must be evaluated so that
 //           we push e2 .. en to cnt-part.
 //
 //   Subcase: When the top of stack, v1, is #<macro> or #<usrmacro>.
 //     < (v1 . S), E, (back . nil), (((e2 ... en) . C). D) >
-//     -> < (en .. e2 c_argend S), E, (c_call . C), D >   if v1 is #<macro> or #<usrmacro>
+//     => < (en .. e2 c_argend S), E, (c_call . C), D >   if v1 is #<macro> or #<usrmacro>
 //   Remark: The arguments must *not* be evaluated so that
 //           we push e2 .. en to stk-part immediately.
 //
 // Case: T_CALL
 //   Subcase: If u is #<primitive>
 //     < (vn ... v1 c_argend u S), E, (c_call . C), D >
-//     -> < ((v1 ... vn) . S), E, C, D >
-//     -> ... the execution by #<primitive> ...
-//     -> < S', E', C', D' >
+//     => < ((v1 ... vn) . S), E, C, D >
+//     => ... the execution by #<primitive> ...
+//     => < S', E', C', D' >
 //     where S', E', C', and D' are the result of the primitive function call.
 //
 //   Subcase: If u is #<macro>
 //     < (en ... e1 c_argend u S), E, (c_call . C), D >
-//     -> < ((e1 ... en) . S), E, C, D >
-//     -> ... the execution by #<macro> ...
-//     -> < S', E', C', D' >
+//     => < ((e1 ... en) . S), E, C, D >
+//     => ... the execution by #<macro> ...
+//     => < S', E', C', D' >
 //     where S', E', C', and D' are the result of the primitive macro call.
 //
 //   Subcase: If u is #<closure> (we omit the case of variadic functions)
 //     Suppose that "u" is the colosure of (lambda (x1 ... xn) body) 
 //     with E' which is its closure environment. Then,
 //     < (vn ... v1 c_argend u S), E, (c_call . C), D >
-//     -> < nil, ( (x1 . v1) (x2 . v2) ... (xn . vn) E' ), (body c_ret), (S E C D)>
+//     => < nil, ( (x1 . v1) (x2 . v2) ... (xn . vn) E' ), (body c_ret), (S E C D)>
 //
-//   Subcase: If u is #<macro> (we omit the case of variadic macros)
-//     Suppose that "u" is the colosure of (macro (x1 ... xn) body) 
+//   Subcase: If u is #<usrmacro> (we omit the case of variadic macros)
+//     Suppose that "u" is the closure of (macro (x1 ... xn) body) 
 //     with E' which is its closure environment. Then,
 //     < (en ... e1 c_argend u S), E, (c_call . C), D >
-//     -> < nil, ( (x1 . e1) (x2 . e2) ... (xn . en) E' ), (body c_ret), ((c_argend #<primitive: eval> S) E (c_call . C) D)>
+//     => < nil, ( (x1 . e1) (x2 . e2) ... (xn . en) E' ), (body c_ret), ((c_argend #<primitive: eval> S) E (c_call . C) D)>
 //
 // Case: T_RET
 //   < (v . S), E, (c_ret . nil), (S' E' C' D')>
-//   -> < (v . S'), E', C', D' >
+//   => < (v . S'), E', C', D' >
 //---------------------------------------------
+
+void op_value(pointer *stk, pointer *env, pointer *cnt, pointer *dmp)
+{
+  *stk = CONS(CAR(*cnt), *stk);
+  *cnt = CDR(*cnt);
+}
+
+void op_ident(pointer *stk, pointer *env, pointer *cnt, pointer *dmp)
+{
+  *stk = CONS(lookup(*env, CAR(*cnt)->ident), *stk);
+  *cnt = CDR(*cnt);
+}
+
+void op_cons(pointer *stk, pointer *env, pointer *cnt, pointer *dmp)
+{
+  *dmp = CONS(CONS(CDAR(*cnt), CDR(*cnt)), *dmp);
+  *cnt = CONS3(CAAR(*cnt), c_back, nil);
+}
+
+void op_back(pointer *stk, pointer *env, pointer *cnt, pointer *dmp)
+{
+  pointer func     = CAR(*stk);
+  pointer args     = CAAR(*dmp);
+  pointer tail_cnt = CDAR(*dmp);
+  assert(TYPE(func, T_CLOS | T_MACRO | T_PRIM | T_USRMACRO));
+  if (TYPE(func, T_PRIM | T_CLOS)) {
+    *stk = CONS(c_argend, *stk);
+    *cnt = append(args, CONS(c_call, tail_cnt));
+  } else if (TYPE(func, T_MACRO | T_USRMACRO)) {
+    *stk = append(reverse(args), CONS(c_argend, *stk));
+    *cnt = CONS(c_call, tail_cnt);
+  }
+  *dmp = CDR(*dmp);
+}
+
+void op_call(pointer *stk, pointer *env, pointer *cnt, pointer *dmp)
+{
+  pointer args = take_args(stk);
+  pointer func = CAR(*stk);
+  *stk = CDR(*stk);
+  *cnt = CDR(*cnt);
+  if (TYPE(func, T_PRIM | T_MACRO)) {
+    *stk = CONS(args, *stk);
+    func->func(stk, env, cnt, dmp);
+  } else if (TYPE(func, T_CLOS | T_USRMACRO)) {
+    pointer cls_env, body; 
+    if (TYPE(func->params, T_IDENT)) {// If the closure is a variadic function
+      pointer bind = CONS(func->params, args);
+      cls_env = CONS(bind, func->env);
+    } else {
+      pointer binds = zip(func->params, args);
+      cls_env = append(binds, func->env);
+    }
+    body = CONS3(func->body, c_ret, nil);
+    if (TYPE(func, T_CLOS))
+      *dmp = CONS4(*stk, *env, *cnt, *dmp);
+    else if (TYPE(func, T_USRMACRO))
+      *dmp = CONS4(CONS3(c_argend, eval_cell, *stk), *env, CONS(c_call, *cnt), *dmp);
+    *stk = nil;
+    *env = cls_env;
+    *cnt = body;
+  } else {
+    error("Invalid function call");
+  }
+}
+
+void op_ret(pointer *stk, pointer *env, pointer *cnt, pointer *dmp)
+{
+  *stk = CONS(CAR(*stk), CAR(*dmp));
+  *env = CADR(*dmp);
+  *cnt = CADDR(*dmp);
+  *dmp = CDDDR(*dmp);
+}
+
 void run()
 {
   pointer stk, env, cnt, dmp;
-  pointer p, eval_cell;
+  pointer p;
 
-  memory = mp = alloc_memory();
-  renv = nil;
-
-  env = init_env();
+  memory    = mp = alloc_memory();
+  renv      = nil;
+  env       = init_env();
   eval_cell = lookup(env, "eval");
   while ((p = parse_cell()) != NULL) {
     stk = nil;
@@ -684,60 +762,17 @@ void run()
     debug_output(stk, env, cnt, dmp);
     while (!TYPE((p = CAR(cnt)), T_STOP)) {
       if (TYPE(p, T_NIL | T_DATA | T_CLOS | T_USRMACRO | T_PRIM | T_MACRO)) {
-        stk = CONS(p, stk);
-        cnt = CDR(cnt);
+        op_value(&stk, &env, &cnt, &dmp);
       } else if (TYPE(p, T_IDENT)) {
-        stk = CONS(lookup(env, p->ident), stk);
-        cnt = CDR(cnt);
+        op_ident(&stk, &env, &cnt, &dmp);
       } else if (TYPE(p, T_CONS)) {
-        dmp = CONS(CONS(CDR(p), CDR(cnt)), dmp);
-        cnt = CONS3(CAR(p), c_back, nil);
+        op_cons(&stk, &env, &cnt, &dmp);
       } else if (TYPE(p, T_BACK)) {
-        pointer func     = CAR(stk);
-        pointer args     = CAAR(dmp);
-        pointer tail_cnt = CDAR(dmp);
-        assert(TYPE(func, T_CLOS | T_MACRO | T_PRIM | T_USRMACRO));
-        if (TYPE(func, T_PRIM | T_CLOS)) {
-          stk = CONS(c_argend, stk);
-          cnt = append(args, CONS(c_call, tail_cnt));
-        } else if (TYPE(func, T_MACRO | T_USRMACRO)) {
-          stk = append(reverse(args), CONS(c_argend, stk));
-          cnt = CONS(c_call, tail_cnt);
-        }
-        dmp = CDR(dmp);
+        op_back(&stk, &env, &cnt, &dmp);
       } else if (TYPE(p, T_CALL)) {
-        pointer args = take_args(&stk);
-        pointer func = CAR(stk);
-        stk = CDR(stk);
-        cnt = CDR(cnt);
-        if (TYPE(func, T_PRIM | T_MACRO)) {
-          stk = CONS(args, stk);
-          func->func(&stk, &env, &cnt, &dmp);
-        } else if (TYPE(func, T_CLOS | T_USRMACRO)) {
-          pointer cls_env, body; 
-          if (TYPE(func->params, T_IDENT)) {// If the closure is a variadic function
-            pointer bind = CONS(func->params, args);
-            cls_env = CONS(bind, func->env);
-          } else {
-            pointer binds = zip(func->params, args);
-            cls_env = append(binds, func->env);
-          }
-          body = CONS3(func->body, c_ret, nil);
-          if (TYPE(func, T_CLOS))
-            dmp = CONS4(stk, env, cnt, dmp);
-          else if (TYPE(func, T_USRMACRO))
-            dmp = CONS4(CONS3(c_argend, eval_cell, stk), env, CONS(c_call, cnt), dmp);
-          stk = nil;
-          env = cls_env;
-          cnt = body;
-        } else {
-          error("Invalid function call");
-        }
+        op_call(&stk, &env, &cnt, &dmp);
       } else if (TYPE(p, T_RET)) {
-        stk = CONS(CAR(stk), CAR(dmp));
-        env = CADR(dmp);
-        cnt = CADDR(dmp);
-        dmp = CDDDR(dmp);
+        op_ret(&stk, &env, &cnt, &dmp);
       } else {
         error("Undefined execution: %d", p->type);
       }
