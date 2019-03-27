@@ -7,7 +7,7 @@
 #include <assert.h>
 #include <sys/mman.h>
 
-#define DEBUG 0
+#define DEBUG 1
 
 void error(char *fmt, ...)
 {
@@ -133,27 +133,27 @@ pointer make_closure(int type, pointer env, pointer params, pointer body)
   return mk((cell){ type, .env = env, .params = params, .body = body });
 }
 
-void sc(pointer p);
+void pc(pointer p);
 
-void slist(pointer p)
+void plist(pointer p)
 {
-  sc(CAR(p));
+  pc(CAR(p));
   if (TYPE(CDR(p), T_CONS)) {
     printf(" ");
-    slist(CDR(p));
+    plist(CDR(p));
   } else if (!TYPE(CDR(p), T_NIL)) {
     printf(" . ");
-    sc(CDR(p));
+    pc(CDR(p));
   }
 }
 
-void sc(pointer p)
+void pc(pointer p)
 {
   switch(p->type) {
   case T_NIL:      printf("()");                         break;
   case T_IDENT:    printf("%s", p->ident);               break;
   case T_DATA:     printf("%d", p->data);                break;
-  case T_CONS:     printf("("); slist(p); printf(")");   break;
+  case T_CONS:     printf("("); plist(p); printf(")");   break;
   case T_CLOS:     printf("#<closure>");                 break;
   case T_USRMACRO: printf("#<usrmacro>");                break;
   case T_PRIM:     printf("#<primitive: %s>", p->ident); break;
@@ -169,7 +169,7 @@ void sc(pointer p)
 
 void print_cell(pointer p)
 {
-  sc(p); printf("\n");
+  pc(p); printf("\n");
 }
 
 char lex()
@@ -267,12 +267,11 @@ pointer parse_cell()
       char *ident = read_ident(c);
       {// For reader macro
         pointer p, macro, rest;
-        char *pos, *postfix;
+        char *postfix;
         p = renv;
         while (!TYPE(p, T_NIL)) {
           macro = CAR(p);
-          pos = strstr(ident, CAR(macro)->ident);
-          if (pos != NULL) {
+          if (strstr(ident, CAR(macro)->ident) != NULL) {
             postfix = strrev(ident+strlen(CAR(macro)->ident));
             while (*postfix != '\0')
               unlex(*(postfix++));
@@ -317,12 +316,13 @@ pointer append(pointer p, pointer q)
 
 pointer zip(pointer p, pointer q)
 {
+  // Assumption: |p| <= |q|, where |x| means the length of x.
   pointer ret = nil;
   for (;;) {
     assert(TYPE(p, T_NIL | T_IDENT | T_CONS));
     if (TYPE(p, T_NIL)) {
       break;
-    } else if (TYPE(p, T_IDENT)) {// For a variadic parameter
+    } else if (TYPE(p, T_IDENT)) {// If |p| < |q|. (Binds a variadic parameter)
       ret = CONS(CONS(p, q), ret);
       break;
     } else if (TYPE(p, T_CONS)) {
@@ -547,74 +547,71 @@ pointer init_env()
   return env;
 }
 
-//--------------------------------------------
-//
+//============================================
 // Transition rule of Exntended SECD Machine
-//
-//--------------------------------------------
-// Case: T_STOP
-//   < S, E, stop, D > =/=>
-//
-//   Remark: This means that whole evaluation of a s-exp is completed.
-//           The final value is in the top of S.
-//
-// Case: Value (T_NIL | T_DATA | T_CLOS | T_USRMACRO)
-//   < S, E, (v . C), D >
-//   => < (v . S), E, C, D >
-//
-// Case: T_CONS
-//   < S, E, ((e1 e2 ... en) . C), D >
-//   => < S, E, (e1 c_back), (((e2 ... en) . C) . D)>
-//   Remark: We focus on the computation of the head (i.e., e1),
-//           because the remaining computation depends on two cases:
-//           (1) e2 ... en will be evaluated if e1 reduces to a function;
-//           (2) e2 ... en will not be evaluated if e1 reduces to a macro.
-//
-// Case: T_BACK
-//   Subcase: When the top of stack, v1, is #<primitive> or #<closure>.
-//   < (v1 . S), E, (back . nil), (((e2 ... en) . C). D) >
-//   => < (c_argend . S), E, (e2 .. en c_call C), D >   if v1 is #<primitive> or #<closure>
-//   Remark: The arguments must be evaluated so that
-//           we push e2 .. en to cnt-part.
-//
-//   Subcase: When the top of stack, v1, is #<macro> or #<usrmacro>.
-//     < (v1 . S), E, (back . nil), (((e2 ... en) . C). D) >
-//     => < (en .. e2 c_argend S), E, (c_call . C), D >   if v1 is #<macro> or #<usrmacro>
-//   Remark: The arguments must *not* be evaluated so that
-//           we push e2 .. en to stk-part immediately.
-//
-// Case: T_CALL
-//   Subcase: If u is #<primitive>
-//     < (vn ... v1 c_argend u S), E, (c_call . C), D >
-//     => < ((v1 ... vn) . S), E, C, D >
-//     => ... the execution by #<primitive> ...
-//     => < S', E', C', D' >
-//     where S', E', C', and D' are the result of the primitive function call.
-//
-//   Subcase: If u is #<macro>
-//     < (en ... e1 c_argend u S), E, (c_call . C), D >
-//     => < ((e1 ... en) . S), E, C, D >
-//     => ... the execution by #<macro> ...
-//     => < S', E', C', D' >
-//     where S', E', C', and D' are the result of the primitive macro call.
-//
-//   Subcase: If u is #<closure> (we omit the case of variadic functions)
-//     Suppose that "u" is the colosure of (lambda (x1 ... xn) body) 
-//     with E' which is its closure environment. Then,
-//     < (vn ... v1 c_argend u S), E, (c_call . C), D >
-//     => < nil, ( (x1 . v1) (x2 . v2) ... (xn . vn) E' ), (body c_ret), (S E C D)>
-//
-//   Subcase: If u is #<usrmacro> (we omit the case of variadic macros)
-//     Suppose that "u" is the closure of (macro (x1 ... xn) body) 
-//     with E' which is its closure environment. Then,
-//     < (en ... e1 c_argend u S), E, (c_call . C), D >
-//     => < nil, ( (x1 . e1) (x2 . e2) ... (xn . en) E' ), (body c_ret), ((c_argend #<primitive: eval> S) E (c_call . C) D)>
-//
-// Case: T_RET
-//   < (v . S), E, (c_ret . nil), (S' E' C' D')>
-//   => < (v . S'), E', C', D' >
-//---------------------------------------------
-
+//============================================
+//  Case: T_STOP
+//    < S, E, stop, D > =/=>
+// 
+//    Remark: This means that whole evaluation of a s-exp is completed.
+//            The final value is in the top of S.
+// 
+//  Case: Value (T_NIL | T_DATA | T_CLOS | T_USRMACRO)
+//    < S, E, (v . C), D >
+//    => < (v . S), E, C, D >
+// 
+//  Case: T_CONS
+//    < S, E, ((e1 e2 ... en) . C), D >
+//    => < S, E, (e1 c_back), (((e2 ... en) . C) . D)>
+//    Remark: We focus on the computation of the head (i.e., e1),
+//            because the remaining computation depends on two cases:
+//            (1) e2 ... en will be evaluated if e1 reduces to a function;
+//            (2) e2 ... en will not be evaluated if e1 reduces to a macro.
+// 
+//  Case: T_BACK
+//    Subcase: When the top of stack, v1, is #<primitive> or #<closure>.
+//    < (v1 . S), E, (back . nil), (((e2 ... en) . C). D) >
+//    => < (c_argend . S), E, (e2 .. en c_call C), D >   if v1 is #<primitive> or #<closure>
+//    Remark: The arguments must be evaluated so that
+//            we push e2 .. en to cnt-part.
+// 
+//    Subcase: When the top of stack, v1, is #<macro> or #<usrmacro>.
+//      < (v1 . S), E, (back . nil), (((e2 ... en) . C). D) >
+//      => < (en .. e2 c_argend S), E, (c_call . C), D >   if v1 is #<macro> or #<usrmacro>
+//    Remark: The arguments must *not* be evaluated so that
+//            we push e2 .. en to stk-part immediately.
+// 
+//  Case: T_CALL
+//    Subcase: If u is #<primitive>
+//      < (vn ... v1 c_argend u S), E, (c_call . C), D >
+//      => < ((v1 ... vn) . S), E, C, D >
+//      => ... the execution by #<primitive> ...
+//      => < S', E', C', D' >
+//      where S', E', C', and D' are the result of the primitive function call.
+// 
+//    Subcase: If u is #<macro>
+//      < (en ... e1 c_argend u S), E, (c_call . C), D >
+//      => < ((e1 ... en) . S), E, C, D >
+//      => ... the execution by #<macro> ...
+//      => < S', E', C', D' >
+//      where S', E', C', and D' are the result of the primitive macro call.
+// 
+//    Subcase: If u is #<closure> (we omit the case of variadic functions)
+//      Suppose that "u" is the colosure of (lambda (x1 ... xn) body) 
+//      with E' which is its closure environment. Then,
+//      < (vn ... v1 c_argend u S), E, (c_call . C), D >
+//      => < nil, ( (x1 . v1) (x2 . v2) ... (xn . vn) E' ), (body c_ret), (S E C D)>
+// 
+//    Subcase: If u is #<usrmacro> (we omit the case of variadic macros)
+//      Suppose that "u" is the closure of (macro (x1 ... xn) body) 
+//      with E' which is its closure environment. Then,
+//      < (en ... e1 c_argend u S), E, (c_call . C), D >
+//      => < nil, ( (x1 . e1) (x2 . e2) ... (xn . en) E' ), (body c_ret), ((c_argend #<primitive: eval> S) E (c_call . C) D)>
+// 
+//  Case: T_RET
+//    < (v . S), E, (c_ret . nil), (S' E' C' D')>
+//    => < (v . S'), E', C', D' >
+//============================================
 void debug_output(pointer stk, pointer env, pointer cnt, pointer dmp)
 {
 #if DEBUG
@@ -684,7 +681,7 @@ void op_call(pointer *stk, pointer *env, pointer *cnt, pointer *dmp)
     func->func(stk, env, cnt, dmp);
   } else if (TYPE(func, T_CLOS | T_USRMACRO)) {
     pointer cls_env, body; 
-    if (TYPE(func->params, T_IDENT)) {// If the closure is a variadic function
+    if (TYPE(func->params, T_IDENT)) {// If the closure is a variadic function/macro
       pointer bind = CONS(func->params, args);
       cls_env = CONS(bind, func->env);
     } else {
@@ -723,27 +720,26 @@ void run()
     stk = nil;
     cnt = CONS3(p, c_stop, nil);
     dmp = nil;
-    debug_output(stk, env, cnt, dmp);
-    while (!TYPE((p = CAR(cnt)), T_STOP)) {
-      if (TYPE(p, T_NIL | T_DATA | T_CLOS | T_USRMACRO | T_PRIM | T_MACRO)) {
-        op_value(&stk, &env, &cnt, &dmp);
-      } else if (TYPE(p, T_IDENT)) {
-        op_ident(&stk, &env, &cnt, &dmp);
-      } else if (TYPE(p, T_CONS)) {
-        op_cons(&stk, &env, &cnt, &dmp);
-      } else if (TYPE(p, T_BACK)) {
-        op_back(&stk, &env, &cnt, &dmp);
-      } else if (TYPE(p, T_CALL)) {
-        op_call(&stk, &env, &cnt, &dmp);
-      } else if (TYPE(p, T_RET)) {
-        op_ret(&stk, &env, &cnt, &dmp);
-      } else {
-        error("Undefined execution: %d", p->type);
-      }
+    do {
       debug_output(stk, env, cnt, dmp);
-    }
+      if (TYPE(p, T_NIL | T_DATA | T_CLOS | T_USRMACRO | T_PRIM | T_MACRO))
+        op_value(&stk, &env, &cnt, &dmp);
+      else if (TYPE(p, T_IDENT))
+        op_ident(&stk, &env, &cnt, &dmp);
+      else if (TYPE(p, T_CONS))
+        op_cons(&stk, &env, &cnt, &dmp);
+      else if (TYPE(p, T_BACK))
+        op_back(&stk, &env, &cnt, &dmp);
+      else if (TYPE(p, T_CALL))
+        op_call(&stk, &env, &cnt, &dmp);
+      else if (TYPE(p, T_RET))
+        op_ret(&stk, &env, &cnt, &dmp);
+      else
+        error("Undefined execution: %d", p->type);
+    } while (!TYPE((p = CAR(cnt)), T_STOP));
     assert(TYPE(dmp, T_NIL));
   }
+  debug_output(stk, env, cnt, dmp);
 }
 
 int main(int argc, char **argv)
