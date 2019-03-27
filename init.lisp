@@ -5,7 +5,7 @@
 ; print
 ; quote
 ; _define
-; _add-reader-macro
+; _def-reader-macro
 ; cons
 ; car
 ; cdr
@@ -42,13 +42,13 @@
 ; (1) First, the arguments e1, ..., en are passed to "body" with "quote" wrappings:
 ;
 ;     ((macro (x1 x2 ... xn) body) e1 e2 ... en)
-;     ~> body[x1 := (quote e1), x2 := (quote e2), ..., xn := (quote en)]
+;     => body[x1 := (quote e1), x2 := (quote e2), ..., xn := (quote en)]
 ;     ~> ...
 ;     ~> body' ; The result of the computation of "body[x1 := (quote e1), x2 := (quote e2), ..., xn := (quote en)]"
 ;
 ;     Note that the original arguments e1, ..., en are *not* evaluated in this stage.
 ;
-; (2) Then, the final value is obtaines as the result of application "eval" to "body'", i.e., as the following:
+; (2) Then, the final value is obained by applying "eval" to "body'" as follows:
 ;
 ;     (eval body')
 ;     ~> ...
@@ -123,28 +123,24 @@
   (if (pair? ls) (cons (quote defun) (cons (car ls) (cons (cdr ls) e)))
                  (list (quote defvar) ls (car e))))
 
-; (_add-reader-macro (quote ') quote)
-
 (define null ())
 (define (null? x) (eq? x null))
 (define (atom? x) (not (pair? x)))
 (define (_ n) (- 0 n))
 (define (not x) (if x 0 1))
 
-(define-macro (add-reader-macro id e)
-  (list (quote _add-reader-macro) (list (quote quote) id) e))
-
-(add-reader-macro ' quote)
+(define-macro (define-reader-macro id e)
+  (list (quote _def-reader-macro) (list (quote quote) id) e))
 
 (define-macro (and x y)
   ; `(if ,x (if ,y 1 0) 0)
-  (list 'if x
-        (list 'if y 1 0) 0))
+  (list (quote if) x
+        (list (quote if) y 1 0) 0))
 
 (define-macro (or x y)
   ; `(if ,x 1 (if ,y 1 0))
-  (list 'if x 1
-        (list 'if y 1 0)))
+  (list (quote if) x 1
+        (list (quote if) y 1 0)))
 
 (define (<= x y) (or (< x y) (= x y)))
 (define (> x y) (< y x))
@@ -201,7 +197,6 @@
         (rec (cdr ls1) (cons (car ls1) acc))))
   (rec (reverse ls1) ls2))
 
-
 (define (filter f ls)
   (define (filter0 ls acc)
       (if (null? ls) (reverse acc)
@@ -222,3 +217,8 @@
       (if (null? (cdr ls)) (car ls)
           (last (cdr ls)))))
 
+(define-reader-macro ' quote)
+(define-macro (quasiquote x) (list 'list ''TODO (list 'quote x)))
+(define-reader-macro ` quasiquote)
+
+(print `(print 42))

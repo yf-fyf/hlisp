@@ -21,17 +21,17 @@ void error(char *fmt, ...)
 
 #define T_NIL          1 // 0000 0000 0000 0001
 #define T_IDENT        2 // 0000 0000 0000 0010
-#define T_CLOS         4 // 0000 0000 0000 0100
-#define T_DATA         8 // 0000 0000 0000 1000
-#define T_CONS        16 // 0000 0000 0001 0000
-#define T_PRIM        32 // 0000 0000 0010 0000
-#define T_STOP        64 // 0000 0000 0100 0000
-#define T_CALL       128 // 0000 0000 1000 0000
-#define T_BACK       256 // 0000 0001 0000 0000
-#define T_RET        512 // 0000 0010 0000 0000
-#define T_MACRO     1024 // 0000 0100 0000 0000
+#define T_DATA         4 // 0000 0000 0000 0100
+#define T_CONS         8 // 0000 0000 0000 1000
+#define T_CLOS        16 // 0000 0000 0001 0000
+#define T_USRMACRO    32 // 0000 0000 0010 0000
+#define T_PRIM        64 // 0000 0000 0100 0000
+#define T_MACRO      128 // 0000 0000 1000 0000
+#define T_STOP       256 // 0000 0001 0000 0000
+#define T_BACK       512 // 0000 0010 0000 0000
+#define T_CALL      1024 // 0000 0100 0000 0000
 #define T_ARGEND    2048 // 0000 1000 0000 0000
-#define T_USRMACRO  4096 // 0001 0000 0000 0000
+#define T_RET       4096 // 0001 0000 0000 0000
 #define T_UNMARK  0x7FFF // 0111 1111 1111 1111
 #define T_MARK    0x8000 // 1000 0000 0000 0000
 
@@ -80,27 +80,23 @@ typedef void (*primitive_func)(pointer *, pointer *, pointer *, pointer *);
 
 #define CELL_LIMIT 10000000
 #define MEMORY_SIZE (CELL_LIMIT * sizeof(cell))
-pointer memory, mp;
+pointer alloc_memory() { return malloc(MEMORY_SIZE); }
 
-pointer alloc_memory()
-{
-  return malloc(MEMORY_SIZE);
-}
+// ---- global variables ----
+pointer memory, mp;    // momery, and memory pointer
+char lex_buf[MAX_LEN]; // temporary variable for lexer
+pointer renv;          // environment for reader macro
+pointer eval_cell;     // for eval call during evaluation of user macros
+// --------
 
-pointer nil = &(cell){ T_NIL  };
-
-pointer renv;      // environment for reader macro
-pointer eval_cell; // for eval call during evaluation of user macros
-
-pointer c_stop    = &(cell){ T_STOP  };
-pointer c_call    = &(cell){ T_CALL };
-pointer c_back    = &(cell){ T_BACK };
-pointer c_ret     = &(cell){ T_RET  };
-pointer c_argend  = &(cell){ T_ARGEND };
-
-void gc()
-{
-}
+// ---- global constants ----
+const pointer nil      = &(cell){ T_NIL  };
+const pointer c_stop   = &(cell){ T_STOP  };
+const pointer c_call   = &(cell){ T_CALL };
+const pointer c_back   = &(cell){ T_BACK };
+const pointer c_ret    = &(cell){ T_RET  };
+const pointer c_argend = &(cell){ T_ARGEND };
+// --------
 
 pointer mk(cell tmp)
 {
@@ -132,14 +128,9 @@ pointer make_ident(char *ident)
   return p;
 }
 
-pointer make_closure(pointer env, pointer params, pointer body)
+pointer make_closure(int type, pointer env, pointer params, pointer body)
 {
-  return mk((cell){ T_CLOS, .env = env, .params = params, .body = body });
-}
-
-pointer make_user_macro(pointer env, pointer params, pointer body)
-{
-  return mk((cell){ T_USRMACRO, .env = env, .params = params, .body = body });
+  return mk((cell){ type, .env = env, .params = params, .body = body });
 }
 
 void sc(pointer p);
@@ -160,29 +151,26 @@ void sc(pointer p)
 {
   switch(p->type) {
   case T_NIL:      printf("()");                         break;
-  case T_CLOS:     printf("#<closure>");                 break;
   case T_IDENT:    printf("%s", p->ident);               break;
   case T_DATA:     printf("%d", p->data);                break;
   case T_CONS:     printf("("); slist(p); printf(")");   break;
-  case T_PRIM:     printf("#<primitive: %s>", p->ident); break;
-  case T_STOP:     printf("stop");                       break;
-  case T_CALL:     printf("call");                       break;
-  case T_BACK:     printf("back");                       break;
-  case T_RET:      printf("ret");                        break;
-  case T_MACRO:    printf("#<macro: %s>", p->ident);     break;
-  case T_ARGEND:   printf("argend");                     break;
+  case T_CLOS:     printf("#<closure>");                 break;
   case T_USRMACRO: printf("#<usrmacro>");                break;
+  case T_PRIM:     printf("#<primitive: %s>", p->ident); break;
+  case T_MACRO:    printf("#<macro: %s>", p->ident);     break;
+  case T_STOP:     printf("stop");                       break;
+  case T_BACK:     printf("back");                       break;
+  case T_CALL:     printf("call");                       break;
+  case T_ARGEND:   printf("argend");                     break;
+  case T_RET:      printf("ret");                        break;
   default:         error("Undefined type: %d", p->type);
   }
 }
 
 void print_cell(pointer p)
 {
-  sc(p);
-  printf("\n");
+  sc(p); printf("\n");
 }
-
-char lex_buf[MAX_LEN];
 
 char lex()
 {
@@ -331,6 +319,7 @@ pointer zip(pointer p, pointer q)
 {
   pointer ret = nil;
   for (;;) {
+    assert(TYPE(p, T_NIL | T_IDENT | T_CONS));
     if (TYPE(p, T_NIL)) {
       break;
     } else if (TYPE(p, T_IDENT)) {// For a variadic parameter
@@ -340,14 +329,10 @@ pointer zip(pointer p, pointer q)
       ret = CONS(CONS(CAR(p), CAR(q)), ret);
       p = CDR(p);
       q = CDR(q);
-    } else {
-      error("Invalid parameter: %d", p->type);
     }
   }
   return reverse(ret);
 }
-
-pointer eval(pointer *env, pointer p);
  
 pointer lookup(pointer env, char *ident)
 {
@@ -368,20 +353,22 @@ void add_primitive(pointer *env, int type, char *ident, primitive_func func)
   *env = CONS(bind, *env);
 } 
 
-void macro_lambda(pointer *stk,  pointer *env, pointer *cnt, pointer *dmp)
+void macro_closure(int type, pointer *stk,  pointer *env, pointer *cnt, pointer *dmp)
 {
   pointer params = CAAR(*stk);
   pointer body   = CONS(make_ident("begin"), CDAR(*stk));
-  pointer cls = make_closure(*env, params, body);
+  pointer cls    = make_closure(type, *env, params, body);
   *stk = CONS(cls, CDR(*stk));
+}
+
+void macro_lambda(pointer *stk,  pointer *env, pointer *cnt, pointer *dmp)
+{
+  macro_closure(T_CLOS, stk, env, cnt, dmp);
 }
 
 void macro_macro(pointer *stk,  pointer *env, pointer *cnt, pointer *dmp)
 {
-  pointer params = CAAR(*stk);
-  pointer body   = CONS(make_ident("begin"), CDAR(*stk));
-  pointer cls = make_user_macro(*env, params, body);
-  *stk = CONS(cls, CDR(*stk));
+  macro_closure(T_USRMACRO, stk, env, cnt, dmp);
 }
 
 void def_reader_macro(pointer ident, pointer value)
@@ -503,41 +490,19 @@ void prim_bin(pointer *stk, pointer *env, pointer *cnt, pointer *dmp, int (*op)(
   *stk = CONS(make_data(op(n1->data, n2->data)), CDR(*stk));
 }
 
-int bin_add(int a, int b) { return a + b;  }
-int bin_sub(int a, int b) { return a - b;  }
-int bin_mul(int a, int b) { return a * b;  }
-int bin_div(int a, int b) { return a / b;  }
-int bin_mod(int a, int b) { return a % b;  }
-int bin_eq(int a, int b)  { return a == b; }
-int bin_lt(int a, int b)  { return a < b;  }
-void prim_add(pointer *stk, pointer *env, pointer *cnt, pointer *dmp)
-{
-  prim_bin(stk, env, cnt, dmp, bin_add);
+#define DEFINE_ARITH_PRIMITIVE(name, op)                         \
+int bin_##name(int x, int y) { return x op y; }                  \
+void prim_##name(pointer *s, pointer *e, pointer *c, pointer *d) \
+{                                                                \
+  return prim_bin(s, e, c, d, bin_##name);                       \
 }
-void prim_sub(pointer *stk, pointer *env, pointer *cnt, pointer *dmp)
-{
-  prim_bin(stk, env, cnt, dmp, bin_sub);
-}
-void prim_mul(pointer *stk, pointer *env, pointer *cnt, pointer *dmp)
-{
-  prim_bin(stk, env, cnt, dmp, bin_mul);
-}
-void prim_div(pointer *stk, pointer *env, pointer *cnt, pointer *dmp)
-{
-  prim_bin(stk, env, cnt, dmp, bin_div);
-}
-void prim_mod(pointer *stk, pointer *env, pointer *cnt, pointer *dmp)
-{
-  prim_bin(stk, env, cnt, dmp, bin_mod);
-}
-void prim_eq(pointer *stk, pointer *env, pointer *cnt, pointer *dmp)
-{
-  prim_bin(stk, env, cnt, dmp, bin_eq);
-}
-void prim_lt(pointer *stk, pointer *env, pointer *cnt, pointer *dmp)
-{
-  prim_bin(stk, env, cnt, dmp, bin_lt);
-}
+DEFINE_ARITH_PRIMITIVE(add, +)
+DEFINE_ARITH_PRIMITIVE(sub, -)
+DEFINE_ARITH_PRIMITIVE(mul, *)
+DEFINE_ARITH_PRIMITIVE(div, /)
+DEFINE_ARITH_PRIMITIVE(mod, %)
+DEFINE_ARITH_PRIMITIVE(eq, ==)
+DEFINE_ARITH_PRIMITIVE(lt,  <)
 
 void prim_eqp(pointer *stk, pointer *env, pointer *cnt, pointer *dmp)
 {
@@ -581,29 +546,6 @@ pointer init_env()
   add_primitive(&env, T_PRIM, "pair?", prim_pairp);
   return env;
 }
-
-void debug_output(pointer stk, pointer env, pointer cnt, pointer dmp)
-{
-#if DEBUG
-  printf("stk: "); print_cell(stk);
-  printf("cnt: "); print_cell(cnt);
-  printf("dmp: "); print_cell(dmp);
-  printf("env: "); print_cell(env);
-  puts("----");
-#endif
-}
-
-pointer take_args(pointer *stk)
-{
-  pointer args = nil;
-  for (;;) {
-    pointer p = CAR(*stk);
-    *stk = CDR(*stk);
-    if (TYPE(p, T_ARGEND)) break;
-    args = CONS(p, args);
-  }
-  return args;
-} 
 
 //--------------------------------------------
 //
@@ -673,6 +615,17 @@ pointer take_args(pointer *stk)
 //   => < (v . S'), E', C', D' >
 //---------------------------------------------
 
+void debug_output(pointer stk, pointer env, pointer cnt, pointer dmp)
+{
+#if DEBUG
+  printf("stk: "); print_cell(stk);
+  printf("cnt: "); print_cell(cnt);
+  printf("dmp: "); print_cell(dmp);
+  printf("env: "); print_cell(env);
+  puts("----");
+#endif
+}
+
 void op_value(pointer *stk, pointer *env, pointer *cnt, pointer *dmp)
 {
   *stk = CONS(CAR(*cnt), *stk);
@@ -707,12 +660,25 @@ void op_back(pointer *stk, pointer *env, pointer *cnt, pointer *dmp)
   *dmp = CDR(*dmp);
 }
 
+pointer take_args(pointer *stk)
+{
+  pointer args = nil;
+  for (;;) {
+    pointer p = CAR(*stk);
+    *stk = CDR(*stk);
+    if (TYPE(p, T_ARGEND)) break;
+    args = CONS(p, args);
+  }
+  return args;
+} 
+
 void op_call(pointer *stk, pointer *env, pointer *cnt, pointer *dmp)
 {
   pointer args = take_args(stk);
   pointer func = CAR(*stk);
   *stk = CDR(*stk);
   *cnt = CDR(*cnt);
+  assert(TYPE(func, T_PRIM | T_MACRO | T_CLOS | T_USRMACRO)); 
   if (TYPE(func, T_PRIM | T_MACRO)) {
     *stk = CONS(args, *stk);
     func->func(stk, env, cnt, dmp);
@@ -733,8 +699,6 @@ void op_call(pointer *stk, pointer *env, pointer *cnt, pointer *dmp)
     *stk = nil;
     *env = cls_env;
     *cnt = body;
-  } else {
-    error("Invalid function call");
   }
 }
 
