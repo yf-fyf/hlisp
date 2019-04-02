@@ -132,15 +132,29 @@
 (define-macro (define-reader-macro id e)
   (list (quote _def-reader-macro) (list (quote quote) id) e))
 
-(define-macro (and x y)
-  ; `(if ,x (if ,y 1 0) 0)
-  (list (quote if) x
-        (list (quote if) y 1 0) 0))
+(define-reader-macro ' quote)
 
-(define-macro (or x y)
+(define-macro (binary-and x y)
+  ; `(if ,x (if ,y 1 0) 0)
+  (list 'if x
+        (list 'if y 1 0) 0))
+
+(define-macro (and . ls)
+  (define (rec ls)
+    (if (null? ls) 1
+        (list 'binary-and (car ls) (rec (cdr ls)))))
+  (rec ls))
+
+(define-macro (binary-or x y)
   ; `(if ,x 1 (if ,y 1 0))
-  (list (quote if) x 1
-        (list (quote if) y 1 0)))
+  (list 'if x 1
+        (list 'if y 1 0)))
+
+(define-macro (or . ls)
+  (define (rec ls)
+    (if (null? ls) 0
+        (list 'binary-or (car ls) (rec (cdr ls)))))
+  (rec ls))
 
 (define (<= x y) (or (< x y) (= x y)))
 (define (> x y) (< y x))
@@ -174,6 +188,16 @@
 (define (cddadr x) (cdr (cdr (car (cdr x)))))
 (define (cdddar x) (cdr (cdr (cdr (car x)))))
 (define (cddddr x) (cdr (cdr (cdr (cdr x)))))
+
+(define-macro (cond . ls)
+  (define (rec ls)
+    (if (null? ls) ()
+        (list 'if (caar ls)
+                  (cadar ls)
+                  (rec (cdr ls)))))
+  (rec ls))
+
+(define else 1)
 
 (define (iota n)
   (define (rec i)
@@ -213,12 +237,16 @@
         (print_list (cdr ls)))))
 
 (define (last ls)
-  (if (null? ls) null
-      (if (null? (cdr ls)) (car ls)
-          (last (cdr ls)))))
+  (cond ((null? ls) null)
+        ((null? (cdr ls)) (car ls))
+        (else (last (cdr ls)))))
 
-(define-reader-macro ' quote)
-(define-macro (quasiquote x) (list 'list ''TODO (list 'quote x)))
-(define-reader-macro ` quasiquote)
+(define-macro (push expr ident)
+  (list 'set! ident (list 'cons expr ident)))
 
-(print `(print 42))
+(define-macro (pop ident)
+  (list 'begin
+    (list 'define 'tmp (list 'car ident))
+    (list 'set! ident (list 'cdr ident))
+    'tmp))
+

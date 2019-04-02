@@ -7,7 +7,7 @@
 #include <assert.h>
 #include <sys/mman.h>
 
-#define DEBUG 1
+#define DEBUG 0
 
 void error(char *fmt, ...)
 {
