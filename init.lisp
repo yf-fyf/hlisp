@@ -287,29 +287,25 @@
   (eval (list '_quasiquote-expand (list 'quote x))))
 ; ========
 
-; Test of quasiquotation/unquotation
+(define quasiquote (macro (x) (list 'quasiquote-expand (list 'quote x))))
 (define-reader-macro ` 'quasiquote)
 (define-reader-macro , 'unquote)
 (define-reader-macro # 'unquote-splicing)
 
 (define-macro (push expr ident)
-  (quasiquote-expand
-    `(set! ,ident (cons ,expr ,ident))))
+  `(set! ,ident (cons ,expr ,ident)))
 
 (define-macro (pop ident)
   (define tmp (gensym))
-  (quasiquote-expand
-    `(begin (define ,tmp (car ,ident))
-            (set! ,ident (cdr ,ident))
-            ,tmp)))
+  `(begin (define ,tmp (car ,ident))
+          (set! ,ident (cdr ,ident))
+          ,tmp))
 
 (define-macro (unless cond then else)
-  (quasiquote-expand
-    `(if (not ,cond) ,then ,else)))
+  `(if (not ,cond) ,then ,else))
 
 (define-macro (let binds . body)
   (define (vars ls) (map car ls))
   (define (prms ls) (map cadr ls))
-  (quasiquote-expand
-    `((lambda ,(vars binds) . ,body) . ,(prms binds))))
+  `((lambda ,(vars binds) . ,body) . ,(prms binds)))
 
