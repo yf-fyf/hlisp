@@ -236,27 +236,14 @@
         (print (car ls))
         (print_list (cdr ls)))))
 
-(define (last ls)
-  (cond ((null? ls) null)
-        ((null? (cdr ls)) (car ls))
-        (else (last (cdr ls)))))
-
-(define-macro (push expr ident)
-  (list 'set! ident (list 'cons expr ident)))
-
-(define-macro (pop ident)
-  (list 'begin
-    (list 'define 'tmp (list 'car ident))
-    (list 'set! ident (list 'cdr ident))
-    'tmp))
+(define (last ls) (car (reverse ls)))
 
 ; ==== Quasiquote expansion ====
-;
 ; Reference: Alan Bawden. Quasiquotation in Lisp. In proceedings of PEPM, pp.4--12, 1999.
 ;
-; The algorithm we used to implement "quasiquote expansion" is rely on 
+; The algorithm we used to implement "quasiquote expansion" relies on 
 ; the code by Bawden in Appendix B of the above paper.
-
+;
 (define qq-expand null)      ; An initialization for mutual recursion.
 (define qq-expand-list null) ; Same as above.
 
@@ -295,10 +282,34 @@
                           (qq-expand-list (car x) depth)
                           (qq-expand (cdr x) depth)))))))
 
-(define (quasiquote-expand x) (qq-expand (cadr x) 0))
+(define (_quasiquote-expand x) (qq-expand (cadr x) 0))
+(define-macro (quasiquote-expand x)
+  (eval (list '_quasiquote-expand (list 'quote x))))
 ; ========
 
 ; Test of quasiquotation/unquotation
-; (define ls '(quasiquote (1 (unquote (+ 11 5)) 3)))
-; (print (quasiquote-expand ls))
-; (print (eval (quasiquote-expand ls)))
+(define-reader-macro ` 'quasiquote)
+(define-reader-macro , 'unquote)
+(define-reader-macro # 'unquote-splicing)
+
+(define-macro (push expr ident)
+  (quasiquote-expand
+    `(set! ,ident (cons ,expr ,ident))))
+
+(define-macro (pop ident)
+  (define tmp (gensym))
+  (quasiquote-expand
+    `(begin (define ,tmp (car ,ident))
+            (set! ,ident (cdr ,ident))
+            ,tmp)))
+
+(define-macro (unless cond then else)
+  (quasiquote-expand
+    `(if (not ,cond) ,then ,else)))
+
+(define-macro (let binds . body)
+  (define (vars ls) (map car ls))
+  (define (prms ls) (map cadr ls))
+  (quasiquote-expand
+    `((lambda ,(vars binds) . ,body) . ,(prms binds))))
+
