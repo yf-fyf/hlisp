@@ -250,3 +250,55 @@
     (list 'set! ident (list 'cdr ident))
     'tmp))
 
+; ==== Quasiquote expansion ====
+;
+; Reference: Alan Bawden. Quasiquotation in Lisp. In proceedings of PEPM, pp.4--12, 1999.
+;
+; The algorithm we used to implement "quasiquote expansion" is rely on 
+; the code by Bawden in Appendix B of the above paper.
+
+(define qq-expand null)      ; An initialization for mutual recursion.
+(define qq-expand-list null) ; Same as above.
+
+(set! qq-expand (lambda (x depth)
+  (cond ((not (pair? x)) (list 'quote x))
+         ((eq? (car x) 'quasiquote)
+          (list 'cons
+                (list 'quote 'quasiquote)
+                (qq-expand (cdr x) (+ depth 1))))
+         ((or (eq? (car x) 'unquote) (eq? (car x) 'unquote-splicing))
+                      (cond ((> depth 0)
+                             (list 'cons (list 'quote (car x))
+                                         (qq-expand (cdr x) (- depth 1))))
+                            ((and (eq? 'unquote (car x)) (not (null? (cdr x))) (null? (cddr  x)))
+                             (cadr x))
+                            (else (print "Illegal"))))
+         (else (list 'append  (qq-expand-list (car x) depth)
+                               (qq-expand (cdr x) depth))))))
+
+(set! qq-expand-list (lambda (x depth)
+  (cond ((not (pair? x)) (list 'quote (list x)))
+        ((eq? (car x) 'quasiquote)
+         (list 'list (list 'cons (list 'quote 'quasiquote)
+                                 (qq-expand (cdr x) (+ depth 1)))))
+        ((or (eq? (car x) 'unquote) (eq? (car x) 'unquote-splicing))
+         (cond ((> depth 0)
+                (list 'list
+                      (list 'cons
+                            (list 'quote (car x))
+                            (qq-expand (cdr x) (- depth 1)))))
+               ((eq? 'unquote (car x))
+                (cons 'list (cdr x)))
+               (else (cons 'append (cdr x)))))
+        (else (list 'list
+                    (list 'append
+                          (qq-expand-list (car x) depth)
+                          (qq-expand (cdr x) depth)))))))
+
+(define (quasiquote-expand x) (qq-expand (cadr x) 0))
+; ========
+
+; Test of quasiquotation/unquotation
+; (define ls '(quasiquote (1 (unquote (+ 11 5)) 3)))
+; (print (quasiquote-expand ls))
+; (print (eval (quasiquote-expand ls)))
