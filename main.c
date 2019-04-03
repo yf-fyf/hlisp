@@ -509,7 +509,14 @@ void prim_eqp(pointer *stk, pointer *env, pointer *cnt, pointer *dmp)
   pointer args = CAR(*stk);
   pointer a1 = CAR(args);
   pointer a2 = CADR(args);
-  *stk = CONS(make_data(a1==a2?1:0), CDR(*stk));
+  bool eq;
+  if (TYPE(a1, T_IDENT) && TYPE(a2, T_IDENT))
+    eq = strcmp(a1->ident, a2->ident) == 0;
+  else if (TYPE(a1, T_DATA) && TYPE(a2, T_DATA))
+    eq = a1->data == a2->data;
+  else
+    eq = a1 == a2;
+  *stk = CONS(make_data(eq?1:0), CDR(*stk));
 }
 
 void prim_pairp(pointer *stk, pointer *env, pointer *cnt, pointer *dmp)
