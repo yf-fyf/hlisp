@@ -209,39 +209,68 @@
   (if (null? ls) null
       (cons (f (car ls)) (map f (cdr ls)))))
 
+(define (fold f v ls)
+  (define (rec ls acc)
+    (if (null? ls) acc
+        (rec (cdr ls) (f (car ls) acc))))
+  (rec ls v))
+
+(define (fold-right f v ls)
+  (define (rec ls)
+    (if (null? ls) v
+        (f (car ls) (rec (cdr ls)))))
+  (rec ls))
+
 (define (reverse ls)
   (define (rec ls acc)
       (if (null? ls) acc
           (rec (cdr ls) (cons (car ls) acc))))
   (rec ls null))
 
-(define (append ls1 ls2)
+(define (binary-append ls1 ls2)
   (define (rec ls1 acc)
     (if (null? ls1) acc
         (rec (cdr ls1) (cons (car ls1) acc))))
   (rec (reverse ls1) ls2))
 
+(define (append . ls)
+  (fold-right binary-append null ls))
+
 (define (filter f ls)
-  (define (filter0 ls acc)
+  (define (rec ls acc)
       (if (null? ls) (reverse acc)
-          (filter0 (cdr ls)
+          (rec (cdr ls)
                    (if (f (car ls))
                        (cons (car ls) acc)
                        acc))))
-  (filter0 ls null))
+  (rec ls null))
 
-(define (print_list ls)
-  (if (null? ls) null
-      (begin
-        (print (car ls))
-        (print_list (cdr ls)))))
+(define (remove f ls)
+  (filter (lambda (x) (not (f x))) ls))
 
 (define (last ls) (car (reverse ls)))
+
+(define (zip . lss)
+  (define (rec lss acc)
+    (if (null? (car lss))
+        (reverse acc)
+        (rec (map cdr lss) (cons (map car lss) acc))))
+  (rec lss null))
+
+(define (unzip1 ls) (map car ls))
+
+(define (unzip2 ls)
+  (list (map car ls) (map cadr ls)))
+
+(define (unzip3 ls)
+  (list (map car ls)
+        (map cadr ls)
+        (map caddr ls)))
 
 ; ==== Quasiquote expansion ====
 ; Reference: Alan Bawden. Quasiquotation in Lisp. In proceedings of PEPM, pp.4--12, 1999.
 ;
-; The algorithm we used to implement "quasiquote expansion" relies on 
+; The algorithm to implement "quasiquote expansion" relies on 
 ; the code by Bawden in Appendix B of the above paper.
 ;
 (define qq-expand null)      ; An initialization for mutual recursion.
@@ -249,19 +278,19 @@
 
 (set! qq-expand (lambda (x depth)
   (cond ((not (pair? x)) (list 'quote x))
-         ((eq? (car x) 'quasiquote)
-          (list 'cons
-                (list 'quote 'quasiquote)
-                (qq-expand (cdr x) (+ depth 1))))
-         ((or (eq? (car x) 'unquote) (eq? (car x) 'unquote-splicing))
-                      (cond ((> depth 0)
-                             (list 'cons (list 'quote (car x))
-                                         (qq-expand (cdr x) (- depth 1))))
-                            ((and (eq? 'unquote (car x)) (not (null? (cdr x))) (null? (cddr  x)))
-                             (cadr x))
-                            (else (print "Illegal"))))
-         (else (list 'append  (qq-expand-list (car x) depth)
-                               (qq-expand (cdr x) depth))))))
+        ((eq? (car x) 'quasiquote)
+         (list 'cons
+               (list 'quote 'quasiquote)
+               (qq-expand (cdr x) (+ depth 1))))
+        ((or (eq? (car x) 'unquote) (eq? (car x) 'unquote-splicing))
+                     (cond ((> depth 0)
+                            (list 'cons (list 'quote (car x))
+                                        (qq-expand (cdr x) (- depth 1))))
+                           ((and (eq? 'unquote (car x)) (not (null? (cdr x))) (null? (cddr  x)))
+                            (cadr x))
+                           (else (print "Illegal"))))
+        (else (list 'append  (qq-expand-list (car x) depth)
+                             (qq-expand (cdr x) depth))))))
 
 (set! qq-expand-list (lambda (x depth)
   (cond ((not (pair? x)) (list 'quote (list x)))
@@ -289,8 +318,8 @@
 
 (define quasiquote (macro (x) (list 'quasiquote-expand (list 'quote x))))
 (define-reader-macro ` 'quasiquote)
+(define-reader-macro ,@ 'unquote-splicing)
 (define-reader-macro , 'unquote)
-(define-reader-macro # 'unquote-splicing)
 
 (define-macro (push expr ident)
   `(set! ,ident (cons ,expr ,ident)))
@@ -305,7 +334,48 @@
   `(if (not ,cond) ,then ,else))
 
 (define-macro (let binds . body)
-  (define (vars ls) (map car ls))
-  (define (prms ls) (map cadr ls))
-  `((lambda ,(vars binds) . ,body) . ,(prms binds)))
+  (define vars (map car binds))
+  (define prms (map cadr binds))
+  `((lambda ,vars ,@body) ,@prms))
 
+(define-macro (let* binds . body)
+  (define vars (map car binds))
+  (define prms (map cadr binds))
+  (define init (map (lambda (p) `(define ,(car p) ,(cadr p))) binds))
+  `((lambda () ,@init ,@body)))
+
+(define (sum ls) (fold + 0 ls))
+
+(define (length ls)
+  (sum (map (lambda (x) 1) ls)))
+
+(define (take ls n)
+  (define (rec i ls acc)
+    (if (= i 0)
+        (reverse acc)
+        (rec (- i 1) (cdr ls) (cons (car ls) acc))))
+  (rec n ls null))
+
+(define (drop ls n)
+  (if (= n 0) ls
+      (drop (cdr ls) (- n 1))))
+
+; (define (staged-power n)
+;   `(lambda (x)
+;      ,(begin (define (rec n)
+;                (cond ((= n 0) '1) 
+;                      ((= n 1) 'x)
+;                      (else `(* x ,(rec (- n 1))))))
+;              (rec n))))
+
+; (print (staged-power 5)
+
+; (let ((ls (cdr (iota 100))))
+;   (map print
+;        (map (lambda (x)
+;               (let ((check (lambda (y) (= (% x y) 0))))
+;                 (cond ((check 15) 'FizzBuzz)
+;                       ((check 3)  'Fizz)
+;                       ((check 5)  'Buzz)
+;                       (else x))))
+;             ls)))
