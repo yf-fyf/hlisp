@@ -938,6 +938,10 @@ void op_ret(pointer *stk, pointer *env, pointer *cnt, pointer *dmp)
   *dmp = CDDDR(*dmp);
 }
 
+void put_prompt() {
+  printf("* ");
+}
+
 void run()
 {
   pointer stk, env, cnt, dmp;
@@ -950,7 +954,7 @@ void run()
   renv      = nil;
   env       = init_env();
   eval_cell = lookup(env, "eval");
-  while ((p = parse_cell()) != NULL) {
+  while (put_prompt(), (p = parse_cell()) != NULL) {
     stk = nil;
     cnt = CONS3(p, c_stop, nil);
     dmp = nil;
@@ -971,6 +975,7 @@ void run()
       else
         error("Undefined execution: %d", p->type);
     } while (!TYPE((p = CAR(cnt)), T_STOP));
+    print_cell(CAR(stk));
     assert(TYPE(dmp, T_NIL));
     debug_output(stk, env, cnt, dmp);
   }
