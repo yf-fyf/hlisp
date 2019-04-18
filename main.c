@@ -10,6 +10,8 @@
 #define DEBUG_GC   0
 #define GC_VERBOSE 0
 
+#define INIT_FILE "init.lisp"
+
 void error(char *fmt, ...)
 {
   va_list ap;
@@ -294,28 +296,28 @@ pointer append(pointer p, pointer q)
   return ret;
 }
 
-char lex()
+char lex(FILE *fp)
 {
-  char c = getchar();
+  char c = fgetc(fp);
   if (c == ';') {
     do {
-      c = getchar(); // skip a line comment
+      c = fgetc(fp); // skip a line comment
     } while (c != EOF && c != '\n');
   }
   return c;
 }
 
-char space_lex()
+char space_lex(FILE *fp)
 {
   char c;
-  while (isspace(c = lex()))
+  while (isspace(c = lex(fp)))
     ;
   return c;
 }
 
-void unlex(char c)
+void unlex(FILE *fp, char c)
 {
-  ungetc(c, stdin);
+  ungetc(c, fp);
 }
 
 int issymbol(char c)
@@ -328,46 +330,46 @@ int isident(char c)
   return !isspace(c) && issymbol(c);
 }
 
-int read_num(char c)
+int read_num(FILE *fp, char c)
 {
   int n = 0;
   do {
     n = (10*n) + (c-'0');
-  } while(isdigit(c = lex()));
-  unlex(c);
+  } while(isdigit(c = lex(fp)));
+  unlex(fp, c);
   return n;
 }
 
-char *read_ident(char c)
+char *read_ident(FILE *fp, char c)
 {
   char *ptr = lex_buf;
   do {
     *(ptr++) = c;
-  } while(isident(c = lex()));
-  unlex(c);
+  } while(isident(c = lex(fp)));
+  unlex(fp, c);
   *ptr = '\0';
   return lex_buf;
 }
 
-pointer parse_cell();
+pointer parse_cell(FILE *fp);
 
-pointer parse_list()
+pointer parse_list(FILE *fp)
 {
   char c;
   pointer p, q, ret;
  
   SAVE(p); SAVE(q);
-  p = parse_cell();
-  if ((c = space_lex()) == '.') {
-    q = parse_cell();
-    if ((c = space_lex()) != ')')
+  p = parse_cell(fp);
+  if ((c = space_lex(fp)) == '.') {
+    q = parse_cell(fp);
+    if ((c = space_lex(fp)) != ')')
       error("Unexpected input: '%c'", c);
     ret = CONS(p, q);
   } else if (c == ')') {
     ret = CONS(p, nil);
   } else {
-    unlex(c);
-    q = parse_list();
+    unlex(fp, c);
+    q = parse_list(fp);
     ret = CONS(p, q);
   }
   FREE(p); FREE(q);
@@ -385,14 +387,14 @@ char *strrev(char *str)
   return str;
 }
 
-pointer parse_cell()
+pointer parse_cell(FILE *fp)
 {
   char c;
-  while ((c = space_lex()) != EOF) {
+  while ((c = space_lex(fp)) != EOF) {
     if (isdigit(c)) {
-      return make_data(read_num(c));
+      return make_data(read_num(fp, c));
     } else if (isident(c)) {
-      char *ident = read_ident(c);
+      char *ident = read_ident(fp, c);
       {// For reader macro
         int m_len = 0;
         pointer p = renv, macro = NULL;
@@ -413,8 +415,8 @@ pointer parse_cell()
           SAVE(tmp);
           postfix = strrev(ident+strlen(CAR(macro)->ident));
           while (*postfix != '\0')
-            unlex(*(postfix++));
-          tmp = parse_cell();
+            unlex(fp, *(postfix++));
+          tmp = parse_cell(fp);
           ret = CONS3(CDR(macro), tmp, nil);
           FREE(tmp);
           return ret;
@@ -422,10 +424,10 @@ pointer parse_cell()
       }
       return make_ident(ident);
     } else if (c == '(') {
-      if ((c = space_lex()) == ')')
+      if ((c = space_lex(fp)) == ')')
         return nil;
-      unlex(c);
-      return parse_list();
+      unlex(fp, c);
+      return parse_list(fp);
     } else {
       error("Unexpeced input: '%c'", c);
     }
@@ -940,47 +942,64 @@ void put_prompt()
   printf("hlisp> ");
 }
 
+void run_file(FILE *fp, bool repl, pointer *stk, pointer *env, pointer *cnt, pointer *dmp)
+{
+  pointer p;
+  SAVE(p);
+  for (;;) {
+    if (repl)
+      put_prompt();
+    if ((p = parse_cell(fp)) == NULL)
+      break;
+    *stk = nil;
+    *cnt = CONS3(p, c_stop, nil);
+    *dmp = nil;
+    do {
+      debug_output(*stk, *env, *cnt, *dmp);
+      if (TYPE(p, T_NIL | T_DATA | T_CLOS | T_USRMACRO | T_PRIM | T_MACRO))
+        op_value(stk, env, cnt, dmp);
+      else if (TYPE(p, T_IDENT))
+        op_ident(stk, env, cnt, dmp);
+      else if (TYPE(p, T_CONS))
+        op_cons(stk, env, cnt, dmp);
+      else if (TYPE(p, T_BACK))
+        op_back(stk, env, cnt, dmp);
+      else if (TYPE(p, T_CALL))
+        op_call(stk, env, cnt, dmp);
+      else if (TYPE(p, T_RET))
+        op_ret(stk, env, cnt, dmp);
+      else
+        error("Undefined execution: %d", p->type);
+    } while (!TYPE((p = CAR(*cnt)), T_STOP));
+    assert(TYPE(*dmp, T_NIL));
+    debug_output(*stk, *env, *cnt, *dmp);
+    if (repl && !TYPE(*stk, T_NIL))
+      print_cell(CAR(*stk));
+  }
+  FREE(p);
+}
+
 void run()
 {
+  FILE *init;
   pointer stk, env, cnt, dmp;
-  pointer p;
     
   SAVE(stk); SAVE(env); SAVE(cnt); SAVE(dmp);
-  SAVE(renv); SAVE(p);
+  SAVE(renv);
 
   memory    = mp = alloc_memory();
   renv      = nil;
   env       = init_env();
   eval_cell = lookup(env, "eval");
-  while (put_prompt(), (p = parse_cell()) != NULL) {
-    stk = nil;
-    cnt = CONS3(p, c_stop, nil);
-    dmp = nil;
-    do {
-      debug_output(stk, env, cnt, dmp);
-      if (TYPE(p, T_NIL | T_DATA | T_CLOS | T_USRMACRO | T_PRIM | T_MACRO))
-        op_value(&stk, &env, &cnt, &dmp);
-      else if (TYPE(p, T_IDENT))
-        op_ident(&stk, &env, &cnt, &dmp);
-      else if (TYPE(p, T_CONS))
-        op_cons(&stk, &env, &cnt, &dmp);
-      else if (TYPE(p, T_BACK))
-        op_back(&stk, &env, &cnt, &dmp);
-      else if (TYPE(p, T_CALL))
-        op_call(&stk, &env, &cnt, &dmp);
-      else if (TYPE(p, T_RET))
-        op_ret(&stk, &env, &cnt, &dmp);
-      else
-        error("Undefined execution: %d", p->type);
-    } while (!TYPE((p = CAR(cnt)), T_STOP));
-    assert(TYPE(dmp, T_NIL));
-    debug_output(stk, env, cnt, dmp);
-    if (!TYPE(stk, T_NIL))
-      print_cell(CAR(stk));
-  }
+
+  if ((init = fopen(INIT_FILE, "r")) == NULL)
+    error("No initialization file is found");
+  run_file(init, false, &stk, &env, &cnt, &dmp);
+
+  run_file(stdin, true, &stk, &env, &cnt, &dmp);
 
   FREE(stk); FREE(env); FREE(cnt); FREE(dmp);
-  FREE(renv); FREE(p);
+  FREE(renv);
 }
 
 int main(int argc, char **argv)
