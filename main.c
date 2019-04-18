@@ -37,7 +37,7 @@ void error(char *fmt, ...)
 #define T_UNMARK  0x7FFF // 0111 1111 1111 1111
 #define T_MARK    0x8000 // 1000 0000 0000 0000
 
-#define MAX_LEN 30
+#define MAX_LEN 100
 
 typedef struct _cell {
   int type;
@@ -104,7 +104,7 @@ int rp = 0;                   // pointer of root pointers
                   p = NULL;              \
                   root_ptrs[rp++] = &p;  \
                 END
-#define FREE(x) (rp--)
+#define FREE(p) (rp--)
 
 // ---- global constants ----
 const pointer nil      = &(cell){ T_NIL  };
@@ -157,6 +157,9 @@ void gc()
       cnt++;
     }
   }
+  if (cnt == 0)
+    error("No memory space is available");
+
   mp = memory;
 #if GC_VERBOSE
   printf("Free: %d\n", cnt);
@@ -170,13 +173,8 @@ pointer mk(cell tmp)
 #endif
   while (mp - memory < CELL_LIMIT && mp->type != T_UNUSED)
     mp++;
-  if (CELL_LIMIT == mp - memory + 1) {
+  if (CELL_LIMIT == mp - memory) {
     gc();
-    while (mp - memory < CELL_LIMIT && mp->type != T_UNUSED)
-      mp++;
-    if (CELL_LIMIT == mp - memory + 1)
-      error("No memory space is available");
-    mp = memory;
     return mk(tmp);
   }
   *mp = tmp;
@@ -209,8 +207,7 @@ pointer CONS4(pointer a, pointer b, pointer c, pointer d)
 {
   pointer tmp;
   SAVE(tmp);
-  tmp = CONS(c, d);
-  tmp = CONS(b, tmp);
+  tmp = CONS3(b, c, d);
   tmp = CONS(a, tmp);
   FREE(tmp);
   return tmp;
@@ -751,7 +748,7 @@ pointer init_env()
 //  Case: T_STOP
 //    < S, E, stop, D > =/=>
 //
-//    Remark: This means that whole evaluation of a s-exp is completed.
+//    Remark: This means that whole evaluation of an s-exp is completed.
 //            The final value is in the top of S.
 //
 //  Case: Value (T_NIL | T_DATA | T_CLOS | T_USRMACRO | T_PRIM | T_MACRO)
@@ -938,8 +935,9 @@ void op_ret(pointer *stk, pointer *env, pointer *cnt, pointer *dmp)
   *dmp = CDDDR(*dmp);
 }
 
-void put_prompt() {
-  printf("* ");
+void put_prompt()
+{
+  printf("hlisp> ");
 }
 
 void run()
@@ -975,9 +973,10 @@ void run()
       else
         error("Undefined execution: %d", p->type);
     } while (!TYPE((p = CAR(cnt)), T_STOP));
-    print_cell(CAR(stk));
     assert(TYPE(dmp, T_NIL));
     debug_output(stk, env, cnt, dmp);
+    if (!TYPE(stk, T_NIL))
+      print_cell(CAR(stk));
   }
 
   FREE(stk); FREE(env); FREE(cnt); FREE(dmp);
