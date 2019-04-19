@@ -18,7 +18,7 @@ This notion of "(syntactic) homoiconicity" is often referred
 as an essential feature of Lisp,
 since Lisp programs are written as S-expressions and they can be manipulated within the Lisp; namely, programs themselves can be controlled as data by other programs in the same language.
 
-HLisp is, similar to other homoiconic languages, designed as a homoiconic Lisp implementation with a macro mechanism, and is implemented as an extension of SECD machine with what the author call _macro closures_:
+HLisp is, similar to other homoiconic languages, designed as a homoiconic Lisp implementation with a macro mechanism, and is implemented as an extension of SECD machine with what the author calls _macro closures_:
 
 * SECD Machine: A virtual machine for functional programming languages (cf. \[Henderson 1980\]\[Hiroi 2009\]);
 * Macro closure: A first-class macro mechanism,
@@ -40,7 +40,7 @@ can be obtained as user-defined programs:
 * recursive function definition
 * quasi-quotation
 
-This means that a lof of features of HLisp 
+This means that a lot of features of HLisp 
 can be defined by HLisp itself (or so to speak, by microHLisp).
 
 ## To-do list
