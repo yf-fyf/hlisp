@@ -201,7 +201,7 @@
 
 (define (iota n)
   (define (rec i)
-    (if (> i n) null
+    (if (= i n) null
         (cons i (rec (+ i 1)))))
   (rec 0))
 
@@ -367,10 +367,12 @@
 ;                      ((= n 1) 'x)
 ;                      (else `(* x ,(rec (- n 1))))))
 ;              (rec n))))
+; 
+; (print (staged-power 5))
+; (print (eval (staged-power 5)))
+; (print ((eval (staged-power 5)) 3))
 
-; (print (staged-power 5)
-
-; (let ((ls (cdr (iota 100))))
+; (let ((ls (cdr (iota 101))))
 ;   (map print
 ;        (map (lambda (x)
 ;               (let ((check (lambda (y) (= (% x y) 0))))
@@ -379,3 +381,4 @@
 ;                       ((check 5)  'Buzz)
 ;                       (else x))))
 ;             ls)))
+
