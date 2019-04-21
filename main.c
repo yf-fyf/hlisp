@@ -11,6 +11,7 @@
 #define GC_VERBOSE 0
 
 #define INIT_FILE "init.lisp"
+#define PROMPT "hlisp> "
 
 void error(char *fmt, ...)
 {
@@ -117,8 +118,6 @@ const pointer c_ret    = &(cell){ T_RET  };
 const pointer c_argend = &(cell){ T_ARGEND };
 // --------
 
-void print_cell(pointer p);
-
 void mark(pointer *pp)
 {
   #define STACK_LENGTH CELL_LIMIT
@@ -175,7 +174,7 @@ pointer mk(cell tmp)
 #endif
   while (mp - memory < CELL_LIMIT && mp->type != T_UNUSED)
     mp++;
-  if (CELL_LIMIT == mp - memory) {
+  if (mp - memory == CELL_LIMIT) {
     gc();
     return mk(tmp);
   }
@@ -320,14 +319,9 @@ void unlex(FILE *fp, char c)
   ungetc(c, fp);
 }
 
-int issymbol(char c)
-{
-  return !(c == '(' || c == ')' || c == ';');
-}
-
 int isident(char c)
 {
-  return !isspace(c) && issymbol(c);
+  return !isspace(c) && !(c == '(' || c == ')' || c == ';');
 }
 
 int read_num(FILE *fp, char c)
@@ -357,7 +351,6 @@ pointer parse_list(FILE *fp)
 {
   char c;
   pointer p, q, ret;
- 
   SAVE(p); SAVE(q);
   p = parse_cell(fp);
   if ((c = space_lex(fp)) == '.') {
@@ -397,8 +390,8 @@ pointer parse_cell(FILE *fp)
       char *ident = read_ident(fp, c);
       {// For reader macro
         int m_len = 0;
-        pointer p = renv, macro = NULL;
-        while (!TYPE(p, T_NIL)) {
+        pointer p, macro = NULL;
+        for (p = renv; !TYPE(p, T_NIL); p = CDR(p)) {
           if (strstr(ident, CAAR(p)->ident) != NULL) {
             int len = strlen(CAAR(p)->ident);
             if (m_len < len) {
@@ -406,14 +399,13 @@ pointer parse_cell(FILE *fp)
               macro = CAR(p);
             }
           }
-          p = CDR(p);
         }
         if (macro != NULL) {
           pointer tmp, ret; 
           char *postfix;
 
           SAVE(tmp);
-          postfix = strrev(ident+strlen(CAR(macro)->ident));
+          postfix = strrev(ident+m_len);
           while (*postfix != '\0')
             unlex(fp, *(postfix++));
           tmp = parse_cell(fp);
@@ -484,7 +476,7 @@ void add_primitive(pointer *env, int type, char *ident, primitive_func func)
   FREE(p); FREE(bind); FREE(tmp);
 } 
 
-void macro_closure(int type, pointer *stk,  pointer *env, pointer *cnt, pointer *dmp)
+void x_closure(int type, pointer *stk,  pointer *env, pointer *cnt, pointer *dmp)
 {
   pointer params, body, cls, tmp;
   SAVE(params); SAVE(body); SAVE(cls); SAVE(tmp);
@@ -492,18 +484,18 @@ void macro_closure(int type, pointer *stk,  pointer *env, pointer *cnt, pointer 
   tmp    = make_ident("begin");
   body   = CONS(tmp, CDAR(*stk));
   cls    = make_closure(type, *env, params, body);
-  *stk = CONS(cls, CDR(*stk));
+  *stk   = CONS(cls, CDR(*stk));
   FREE(params); FREE(body); FREE(cls); FREE(tmp);
 }
 
 void macro_lambda(pointer *stk,  pointer *env, pointer *cnt, pointer *dmp)
 {
-  macro_closure(T_CLOS, stk, env, cnt, dmp);
+  x_closure(T_CLOS, stk, env, cnt, dmp);
 }
 
 void macro_macro(pointer *stk,  pointer *env, pointer *cnt, pointer *dmp)
 {
-  macro_closure(T_USRMACRO, stk, env, cnt, dmp);
+  x_closure(T_USRMACRO, stk, env, cnt, dmp);
 }
 
 void def_reader_macro(pointer ident, pointer value)
@@ -519,7 +511,7 @@ void prim_eval(pointer *stk, pointer *env, pointer *cnt, pointer *dmp)
 {
   pointer arg;
   SAVE(arg);
-  arg = CAAR(*stk);
+  arg  = CAAR(*stk);
   *stk = CDR(*stk);
   *cnt = CONS(arg, *cnt);
   // printf("Eval: "); print_cell(arg);
@@ -538,7 +530,8 @@ void prim_print(pointer *stk, pointer *env, pointer *cnt, pointer *dmp)
 
 void macro_quote(pointer *stk, pointer *env, pointer *cnt, pointer *dmp)
 {
-  pointer arg; SAVE(arg);
+  pointer arg;
+  SAVE(arg);
   arg = CAAR(*stk);
   *stk = CONS(arg, CDR(*stk));
   FREE(arg);
@@ -551,8 +544,8 @@ void prim_define(pointer *stk, pointer *env, pointer *cnt, pointer *dmp)
   ident = CAAR(*stk);
   value = CADAR(*stk);
   bind  = CONS(ident, value);
-  *stk = CONS(value, CDR(*stk));
-  *env = CONS(bind, *env);
+  *stk  = CONS(value, CDR(*stk));
+  *env  = CONS(bind, *env);
   FREE(ident); FREE(value); FREE(bind);
 }
 
@@ -580,7 +573,7 @@ void prim_car(pointer *stk, pointer *env, pointer *cnt, pointer *dmp)
 {
   pointer arg;
   SAVE(arg);
-  arg = CAAR(*stk);
+  arg  = CAAR(*stk);
   *stk = CONS(CAR(arg), CDR(*stk));
   FREE(arg);
 }
@@ -608,11 +601,10 @@ void prim_gensym(pointer *stk, pointer *env, pointer *cnt, pointer *dmp)
 
 pointer set(pointer env, char *ident, pointer value)
 {
-  pointer p = env;
-  while (!TYPE(p, T_NIL)) {
+  pointer p;
+  for (p = env; !TYPE(p, T_NIL); p = CDR(p)) {
     if (strcmp(CAAR(p)->ident, ident) == 0)
       return (CDAR(p) = value);
-    p = CDR(p);
   }
   error("Unbound variable: \"%s\"", ident);
 }
@@ -625,7 +617,7 @@ void prim_set(pointer *stk, pointer *env, pointer *cnt, pointer *dmp)
   ident = CAR(args);
   value = CADR(args);
   ret   = set(*env, ident->ident, value);
-  *stk = CONS(ret, CDR(*stk));
+  *stk  = CONS(ret, CDR(*stk));
   FREE(args); FREE(ident); FREE(value); FREE(ret);
 }
 
@@ -705,8 +697,8 @@ void prim_pairp(pointer *stk, pointer *env, pointer *cnt, pointer *dmp)
 {
   pointer arg, tmp;
   SAVE(arg); SAVE(tmp);
-  arg = CAAR(*stk);
-  tmp = make_data(TYPE(arg, T_CONS)?1:0);
+  arg  = CAAR(*stk);
+  tmp  = make_data(TYPE(arg, T_CONS)?1:0);
   *stk = CONS(tmp, CDR(*stk));
   FREE(arg); FREE(tmp);
 }
@@ -851,7 +843,8 @@ void op_back(pointer *stk, pointer *env, pointer *cnt, pointer *dmp)
   tail_cnt = CDAR(*dmp);
   assert(TYPE(func, T_CLOS | T_MACRO | T_PRIM | T_USRMACRO));
   if (TYPE(func, T_PRIM | T_CLOS)) {
-    pointer tmp; SAVE(tmp);
+    pointer tmp;
+    SAVE(tmp);
     *stk = CONS(c_argend, *stk);
     tmp  = CONS(c_call, tail_cnt);
     *cnt = append(args, tmp);
@@ -877,7 +870,8 @@ pointer take_args(pointer *stk)
   for (;;) {
     p = CAR(*stk);
     *stk = CDR(*stk);
-    if (TYPE(p, T_ARGEND)) break;
+    if (TYPE(p, T_ARGEND))
+      break;
     args = CONS(p, args);
   }
   FREE(args); FREE(p);
@@ -900,12 +894,14 @@ void op_call(pointer *stk, pointer *env, pointer *cnt, pointer *dmp)
     pointer cls_env, body; 
     SAVE(cls_env); SAVE(body);
     if (TYPE(func->params, T_IDENT)) {// If the closure is a variadic function/macro
-      pointer bind; SAVE(bind);
+      pointer bind;
+      SAVE(bind);
       bind = CONS(func->params, args);
       cls_env = CONS(bind, func->env);
       FREE(bind);
     } else {
-      pointer binds; SAVE(binds);
+      pointer binds;
+      SAVE(binds);
       binds = zip(func->params, args);
       cls_env = append(binds, func->env);
       FREE(binds);
@@ -937,18 +933,13 @@ void op_ret(pointer *stk, pointer *env, pointer *cnt, pointer *dmp)
   *dmp = CDDDR(*dmp);
 }
 
-void put_prompt()
-{
-  printf("hlisp> ");
-}
-
 void run_file(FILE *fp, bool repl, pointer *stk, pointer *env, pointer *cnt, pointer *dmp)
 {
   pointer p;
   SAVE(p);
   for (;;) {
     if (repl)
-      put_prompt();
+      printf("%s", PROMPT);
     if ((p = parse_cell(fp)) == NULL)
       break;
     *stk = nil;
@@ -973,7 +964,7 @@ void run_file(FILE *fp, bool repl, pointer *stk, pointer *env, pointer *cnt, poi
     } while (!TYPE((p = CAR(*cnt)), T_STOP));
     assert(TYPE(*dmp, T_NIL));
     debug_output(*stk, *env, *cnt, *dmp);
-    if (repl && !TYPE(*stk, T_NIL))
+    if (repl && TYPE(*stk, T_CONS))
       print_cell(CAR(*stk));
   }
   FREE(p);

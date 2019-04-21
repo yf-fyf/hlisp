@@ -42,7 +42,7 @@
 ; (1) First, the arguments e1, ..., en are passed to "body" with "quote" wrappings:
 ;
 ;     ((macro (x1 x2 ... xn) body) e1 e2 ... en)
-;     => body[x1 := (quote e1), x2 := (quote e2), ..., xn := (quote en)]
+;     ~> body[x1 := (quote e1), x2 := (quote e2), ..., xn := (quote en)]
 ;     ~> ...
 ;     ~> body' ; The result of the computation of "body[x1 := (quote e1), x2 := (quote e2), ..., xn := (quote en)]"
 ;
