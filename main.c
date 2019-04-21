@@ -11,7 +11,11 @@
 #define GC_VERBOSE 0
 
 #define INIT_FILE "init.lisp"
-#define PROMPT "hlisp> "
+#define PROMPT    "hlisp> "
+
+#define MAX_LEN    100   // Max length of identifier name
+#define CELL_LIMIT 10000 // Max available cells
+#define MAX_ROOT   200   // Max stack length of root pointers for gc
 
 void error(char *fmt, ...)
 {
@@ -39,8 +43,6 @@ void error(char *fmt, ...)
 #define T_RET       4096 // 0001 0000 0000 0000
 #define T_UNMARK  0x7FFF // 0111 1111 1111 1111
 #define T_MARK    0x8000 // 1000 0000 0000 0000
-
-#define MAX_LEN 100
 
 typedef struct _cell {
   int type;
@@ -83,14 +85,6 @@ typedef void (*primitive_func)(pointer *, pointer *, pointer *, pointer *);
 #define CDDAR(p) ((p)->car->cdr->cdr)
 #define CDDDR(p) ((p)->cdr->cdr->cdr)
 
-#define CELL_LIMIT 10000
-pointer alloc_memory()
-{
-  return calloc(CELL_LIMIT, sizeof(cell));
-}
-
-#define MAX_ROOT 200
-
 // ---- global variables ----
 pointer memory, mp;           // momery, and memory pointer
 char lex_buf[MAX_LEN];        // temporary buffer for lexer
@@ -98,6 +92,15 @@ pointer renv;                 // environment for reader macro
 pointer eval_cell;            // for eval call during evaluation of user macros
 pointer *root_ptrs[MAX_ROOT]; // root pointers for GC
 int rp = 0;                   // pointer of root pointers
+// --------
+
+// ---- global constants ----
+const pointer nil      = &(cell){ T_NIL  };
+const pointer c_stop   = &(cell){ T_STOP  };
+const pointer c_call   = &(cell){ T_CALL };
+const pointer c_back   = &(cell){ T_BACK };
+const pointer c_ret    = &(cell){ T_RET  };
+const pointer c_argend = &(cell){ T_ARGEND };
 // --------
 
 #define BEGIN do {
@@ -109,14 +112,10 @@ int rp = 0;                   // pointer of root pointers
                 END
 #define FREE(p) (rp--)
 
-// ---- global constants ----
-const pointer nil      = &(cell){ T_NIL  };
-const pointer c_stop   = &(cell){ T_STOP  };
-const pointer c_call   = &(cell){ T_CALL };
-const pointer c_back   = &(cell){ T_BACK };
-const pointer c_ret    = &(cell){ T_RET  };
-const pointer c_argend = &(cell){ T_ARGEND };
-// --------
+pointer alloc_memory()
+{
+  return calloc(CELL_LIMIT, sizeof(cell));
+}
 
 void mark(pointer *pp)
 {
@@ -187,14 +186,16 @@ pointer make_data(int data)
   return mk((cell){ T_DATA, .data = data });
 }
 
+#define CONS(a, b)        make_cons((a), (b))
+#define CONS3(a, b, c)    make_cons3((a), (b), (c))
+#define CONS4(a, b, c, d) make_cons4((a), (b), (c), (d))
+
 pointer make_cons(pointer car, pointer cdr)
 {
   return mk((cell){ T_CONS, .car = car, .cdr = cdr });
 }
 
-#define CONS(a, b) make_cons((a), (b))
-
-pointer CONS3(pointer a, pointer b, pointer c)
+pointer make_cons3(pointer a, pointer b, pointer c)
 {
   pointer tmp;
   SAVE(tmp);
@@ -204,7 +205,7 @@ pointer CONS3(pointer a, pointer b, pointer c)
   return tmp;
 }
 
-pointer CONS4(pointer a, pointer b, pointer c, pointer d)
+pointer make_cons4(pointer a, pointer b, pointer c, pointer d)
 {
   pointer tmp;
   SAVE(tmp);
@@ -625,12 +626,13 @@ void prim_begin(pointer *stk, pointer *env, pointer *cnt, pointer *dmp)
 {
   pointer p;
   SAVE(p);
-  p = CAR(*stk);
-  if (!TYPE(p, T_NIL)) {
+  if (TYPE((p = CAR(*stk)), T_NIL)) {
+    *stk = CONS(nil, CDR(*stk));
+  } else {
     while (!TYPE(CDR(p), T_NIL))
       p = CDR(p);
+    *stk = CONS(CAR(p), CDR(*stk));
   }
-  *stk = CONS(CAR(p), CDR(*stk));
   FREE(p);
 }
 
@@ -974,9 +976,8 @@ void run()
 {
   FILE *init;
   pointer stk, env, cnt, dmp;
-    
-  SAVE(stk); SAVE(env); SAVE(cnt); SAVE(dmp);
-  SAVE(renv);
+  
+  SAVE(renv); SAVE(stk); SAVE(env); SAVE(cnt); SAVE(dmp);
 
   memory    = mp = alloc_memory();
   renv      = nil;
@@ -989,8 +990,7 @@ void run()
 
   run_file(stdin, true, &stk, &env, &cnt, &dmp);
 
-  FREE(stk); FREE(env); FREE(cnt); FREE(dmp);
-  FREE(renv);
+  FREE(renv); FREE(stk); FREE(env); FREE(cnt); FREE(dmp);
 }
 
 int main(int argc, char **argv)
