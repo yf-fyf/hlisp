@@ -465,14 +465,14 @@ void add_primitive(pointer *env, int type, char *ident, primitive_func func)
 
 void x_closure(int type, pointer *stk,  pointer *env, pointer *cnt, pointer *dmp)
 {
-  pointer params, body, cls, tmp;
-  SAVE(params); SAVE(body); SAVE(cls); SAVE(tmp);
+  pointer params, body, clos, tmp;
+  SAVE(params); SAVE(body); SAVE(clos); SAVE(tmp);
   params = CAAR(*stk);
   tmp    = make_ident("begin");
   body   = CONS(tmp, CDAR(*stk));
-  cls    = make_closure(type, *env, params, body);
-  *stk   = CONS(cls, CDR(*stk));
-  FREE(params); FREE(body); FREE(cls); FREE(tmp);
+  clos   = make_closure(type, *env, params, body);
+  *stk   = CONS(clos, CDR(*stk));
+  FREE(params); FREE(body); FREE(clos); FREE(tmp);
 }
 
 void macro_lambda(pointer *stk,  pointer *env, pointer *cnt, pointer *dmp)
@@ -824,17 +824,17 @@ void op_cons(pointer *stk, pointer *env, pointer *cnt, pointer *dmp)
 
 void op_back(pointer *stk, pointer *env, pointer *cnt, pointer *dmp)
 {
-  pointer func, args, tail_cnt;
-  SAVE(func); SAVE(args); SAVE(tail_cnt);
+  pointer func, args, cnt_tail;
+  SAVE(func); SAVE(args); SAVE(cnt_tail);
   func     = CAR(*stk);
   args     = CAAR(*dmp);
-  tail_cnt = CDAR(*dmp);
-  assert(TYPE(func, T_CLOS | T_MACRO | T_PRIM | T_USRMACRO));
+  cnt_tail = CDAR(*dmp);
+  assert(TYPE(func, T_PRIM | T_CLOS | T_MACRO | T_USRMACRO));
   if (TYPE(func, T_PRIM | T_CLOS)) {
     pointer tmp;
     SAVE(tmp);
     *stk = CONS(c_argend, *stk);
-    tmp  = CONS(c_call, tail_cnt);
+    tmp  = CONS(c_call, cnt_tail);
     *cnt = append(args, tmp);
     FREE(tmp);
   } else if (TYPE(func, T_MACRO | T_USRMACRO)) {
@@ -843,24 +843,22 @@ void op_back(pointer *stk, pointer *env, pointer *cnt, pointer *dmp)
     tmp1 = reverse(args);
     tmp2 = CONS(c_argend, *stk);
     *stk = append(tmp1, tmp2);
-    *cnt = CONS(c_call, tail_cnt);
+    *cnt = CONS(c_call, cnt_tail);
     FREE(tmp1); FREE(tmp2);
   }
   *dmp = CDR(*dmp);
-  FREE(func); FREE(args); FREE(tail_cnt);
+  FREE(func); FREE(args); FREE(cnt_tail);
 }
 
 pointer take_args(pointer *stk)
 {
   pointer args, p;
   SAVE(args); SAVE(p);
-  args = nil;
-  for (;;) {
+  for (args = nil;; args = CONS(p, args)) {
     p = CAR(*stk);
     *stk = CDR(*stk);
     if (TYPE(p, T_ARGEND))
       break;
-    args = CONS(p, args);
   }
   FREE(args); FREE(p);
   return args;
@@ -879,19 +877,19 @@ void op_call(pointer *stk, pointer *env, pointer *cnt, pointer *dmp)
     *stk = CONS(args, *stk);
     func->func(stk, env, cnt, dmp);
   } else if (TYPE(func, T_CLOS | T_USRMACRO)) {
-    pointer cls_env, body; 
-    SAVE(cls_env); SAVE(body);
+    pointer clos_env, body; 
+    SAVE(clos_env); SAVE(body);
     if (TYPE(func->params, T_IDENT)) {// If the closure is a variadic function/macro
       pointer bind;
       SAVE(bind);
       bind = CONS(func->params, args);
-      cls_env = CONS(bind, func->env);
+      clos_env = CONS(bind, func->env);
       FREE(bind);
     } else {
       pointer binds;
       SAVE(binds);
       binds = zip(func->params, args);
-      cls_env = append(binds, func->env);
+      clos_env = append(binds, func->env);
       FREE(binds);
     }
     body = CONS3(func->body, c_ret, nil);
@@ -906,9 +904,9 @@ void op_call(pointer *stk, pointer *env, pointer *cnt, pointer *dmp)
       FREE(tmp1); FREE(tmp2);
     }
     *stk = nil;
-    *env = cls_env;
+    *env = clos_env;
     *cnt = body;
-    FREE(cls_env); FREE(body);
+    FREE(clos_env); FREE(body);
   }
   FREE(args); FREE(func);
 }
@@ -953,6 +951,8 @@ void run_file(FILE *fp, bool repl, pointer *stk, pointer *env, pointer *cnt, poi
     } while (!TYPE((p = CAR(*cnt)), T_STOP));
     assert(TYPE(*dmp, T_NIL));
     debug_output(*stk, *env, *cnt, *dmp);
+    if (repl && TYPE(*stk, T_CONS))
+      print_cell(CAR(*stk));
   }
   FREE(p);
 }
@@ -975,7 +975,7 @@ void run()
 
   run_file(stdin, true, &stk, &env, &cnt, &dmp);
 
-  SAVE(genv); FREE(renv); FREE(stk); FREE(env); FREE(cnt); FREE(dmp);
+  FREE(genv); FREE(renv); FREE(stk); FREE(env); FREE(cnt); FREE(dmp);
 }
 
 int main(int argc, char **argv)
