@@ -88,7 +88,6 @@ typedef void (*primitive_func)(pointer *, pointer *, pointer *, pointer *);
 // ---- global variables ----
 pointer memory, mp;           // momery, and memory pointer
 char lex_buf[MAX_LEN];        // temporary buffer for lexer
-pointer genv;                 // global environment
 pointer renv;                 // environment for reader macro
 pointer eval_cell;            // pointer for "eval" computations of user macro
 pointer *root_ptrs[MAX_ROOT]; // root pointers for GC
@@ -447,8 +446,6 @@ pointer lookup(pointer env, char *ident)
   for (pointer p = env; !TYPE(p, T_NIL); p = CDR(p))
     if (strcmp(CAAR(p)->ident, ident) == 0)
       return CDAR(p);
-  if (env != genv)
-    return lookup(genv, ident);
   error("Unbound variable: \"%s\"", ident);
 }
 
@@ -538,7 +535,7 @@ void prim_define(pointer *stk, pointer *env, pointer *cnt, pointer *dmp)
   value = CADAR(*stk);
   bind  = CONS(ident, value);
   *stk  = CONS(value, CDR(*stk));
-  genv  = CONS(bind, genv);
+  *env  = CONS(bind, *env);
   FREE(ident); FREE(value); FREE(bind);
 }
 
@@ -607,7 +604,7 @@ void prim_set(pointer *stk, pointer *env, pointer *cnt, pointer *dmp)
   args  = CAR(*stk);  
   ident = CAR(args);
   value = CADR(args);
-  ret   = set(genv, ident->ident, value);
+  ret   = set(*env, ident->ident, value);
   *stk  = CONS(ret, CDR(*stk));
   FREE(args); FREE(ident); FREE(value); FREE(ret);
 }
@@ -800,10 +797,9 @@ void debug_output(pointer stk, pointer env, pointer cnt, pointer dmp)
 {
 #if DEBUG
   printf(" stk: "); print_cell(stk);
-  printf(" env: "); print_cell(env);
   printf(" cnt: "); print_cell(cnt);
   printf(" dmp: "); print_cell(dmp);
-  printf("genv: "); print_cell(genv);
+  printf(" env: "); print_cell(env);
   puts("----");
 #endif
 }
@@ -937,7 +933,6 @@ void run_file(FILE *fp, bool repl, pointer *stk, pointer *env, pointer *cnt, poi
     if ((p = parse_cell(fp)) == NULL)
       break;
     *stk = nil;
-    *env = nil;
     *cnt = CONS3(p, c_stop, nil);
     *dmp = nil;
     do {
@@ -970,12 +965,12 @@ void run()
   FILE *init;
   pointer stk, env, cnt, dmp;
   
-  SAVE(genv); SAVE(renv); SAVE(stk); SAVE(env); SAVE(cnt); SAVE(dmp);
+  SAVE(renv); SAVE(stk); SAVE(env); SAVE(cnt); SAVE(dmp);
 
   memory    = mp = alloc_memory();
-  genv      = init_env();
+  env       = init_env();
   renv      = nil;
-  eval_cell = lookup(genv, "eval");
+  eval_cell = lookup(env, "eval");
 
   if ((init = fopen(INIT_FILE, "r")) == NULL)
     error("No initialization file is found");
@@ -983,7 +978,7 @@ void run()
 
   run_file(stdin, true, &stk, &env, &cnt, &dmp);
 
-  FREE(genv); FREE(renv); FREE(stk); FREE(env); FREE(cnt); FREE(dmp);
+  FREE(renv); FREE(stk); FREE(env); FREE(cnt); FREE(dmp);
 }
 
 int main(int argc, char **argv)
