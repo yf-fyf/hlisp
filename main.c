@@ -44,23 +44,23 @@ void error(char *fmt, ...)
 #define T_UNMARK  0x7FFF // 0111 1111 1111 1111
 #define T_MARK    0x8000 // 1000 0000 0000 0000
 
-typedef struct s_cell {
+typedef struct cell {
   int type;
   union {
     int data;
     char ident[MAX_LEN];
     struct {
-      struct s_cell *car;
-      struct s_cell *cdr;
+      struct cell *car;
+      struct cell *cdr;
     };
     struct {
-      struct s_cell *env;
-      struct s_cell *params;
-      struct s_cell *body;
+      struct cell *env;
+      struct cell *params;
+      struct cell *body;
     };
     struct {
       char name[MAX_LEN];
-      void (*func)(struct s_cell **, struct s_cell**, struct s_cell**, struct s_cell**);
+      void (*func)(struct cell **, struct cell**, struct cell**, struct cell**);
     };
   };
 } cell;
@@ -379,7 +379,7 @@ pointer parse_cell(FILE *fp)
       return make_data(read_num(fp, c));
     } else if (isident(c)) {
       char *ident = read_ident(fp, c);
-      {// For reader macro
+      {// Matching for reader macros
         int m_len = 0;
         pointer macro = NULL;
         for (pointer p = renv; !TYPE(p, T_NIL); p = CDR(p)) {
@@ -499,7 +499,6 @@ void prim_eval(pointer *stk, pointer *env, pointer *cnt, pointer *dmp)
   arg  = CAAR(*stk);
   *stk = CDR(*stk);
   *cnt = CONS(arg, *cnt);
-  // printf("Eval: "); print_cell(arg);
   FREE(arg);
 }
 
@@ -572,7 +571,7 @@ void prim_cdr(pointer *stk, pointer *env, pointer *cnt, pointer *dmp)
 {
   pointer arg;
   SAVE(arg);
-  arg = CAAR(*stk);
+  arg  = CAAR(*stk);
   *stk = CONS(CDR(arg), CDR(*stk));
   FREE(arg);
 }
@@ -599,14 +598,12 @@ pointer set(pointer env, char *ident, pointer value)
 
 void prim_set(pointer *stk, pointer *env, pointer *cnt, pointer *dmp)
 {
-  pointer args, ident, value, ret;
-  SAVE(args); SAVE(ident); SAVE(value); SAVE(ret);
-  args  = CAR(*stk);  
-  ident = CAR(args);
-  value = CADR(args);
-  ret   = set(*env, ident->ident, value);
-  *stk  = CONS(ret, CDR(*stk));
-  FREE(args); FREE(ident); FREE(value); FREE(ret);
+  pointer args, ret;
+  SAVE(args); SAVE(ret);
+  args = CAR(*stk);
+  ret  = set(*env, CAR(args)->ident, CADR(args));
+  *stk = CONS(ret, CDR(*stk));
+  FREE(args); FREE(ret);
 }
 
 void prim_begin(pointer *stk, pointer *env, pointer *cnt, pointer *dmp)
@@ -691,8 +688,6 @@ void prim_pairp(pointer *stk, pointer *env, pointer *cnt, pointer *dmp)
   *stk = CONS(tmp, CDR(*stk));
   FREE(arg); FREE(tmp);
 }
-
-void run_file(FILE *fp, bool repl, pointer *stk, pointer *env, pointer *cnt, pointer *dmp);
 
 pointer init_env()
 {
@@ -923,7 +918,7 @@ void op_ret(pointer *stk, pointer *env, pointer *cnt, pointer *dmp)
   *dmp = CDDDR(*dmp);
 }
 
-void run_file(FILE *fp, bool repl, pointer *stk, pointer *env, pointer *cnt, pointer *dmp)
+void run(FILE *fp, bool repl, pointer *stk, pointer *env, pointer *cnt, pointer *dmp)
 {
   pointer p;
   SAVE(p);
@@ -960,11 +955,18 @@ void run_file(FILE *fp, bool repl, pointer *stk, pointer *env, pointer *cnt, poi
   FREE(p);
 }
 
-void run()
+void run_file(char *path, pointer *stk, pointer *env, pointer *cnt, pointer *dmp)
 {
-  FILE *init;
+  FILE *fp;
+  if ((fp = fopen(path, "r")) == NULL)
+    error("The file \"%s\" is not found", path);
+  run(fp, false, stk, env, cnt, dmp);
+  fclose(fp);
+}
+
+int main(int argc, char **argv)
+{
   pointer stk, env, cnt, dmp;
-  
   SAVE(renv); SAVE(stk); SAVE(env); SAVE(cnt); SAVE(dmp);
 
   memory    = mp = alloc_memory();
@@ -972,17 +974,11 @@ void run()
   renv      = nil;
   eval_cell = lookup(env, "eval");
 
-  if ((init = fopen(INIT_FILE, "r")) == NULL)
-    error("No initialization file is found");
-  run_file(init, false, &stk, &env, &cnt, &dmp);
-
-  run_file(stdin, true, &stk, &env, &cnt, &dmp);
+  run_file(INIT_FILE, &stk, &env, &cnt, &dmp);
+  for (int i = 1; i < argc; i++)
+    run_file(argv[i], &stk, &env, &cnt, &dmp);
+  run(stdin, true, &stk, &env, &cnt, &dmp);
 
   FREE(renv); FREE(stk); FREE(env); FREE(cnt); FREE(dmp);
-}
-
-int main(int argc, char **argv)
-{
-  run();
   return 0;
 }
