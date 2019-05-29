@@ -263,7 +263,8 @@ void pc(pointer p)
 
 void print_cell(pointer p)
 {
-  pc(p); printf("\n");
+  pc(p);
+  putchar('\n');
 }
 
 pointer reverse(pointer p)
@@ -505,14 +506,19 @@ void prim_eval(pointer *stk, pointer *env, pointer *cnt, pointer *dmp)
   FREE(arg);
 }
 
-void prim_print(pointer *stk, pointer *env, pointer *cnt, pointer *dmp)
+void prim_display(pointer *stk, pointer *env, pointer *cnt, pointer *dmp)
 {
-  pointer args, ret;
-  SAVE(args); SAVE(ret);
-  for (args = CAR(*stk), ret = nil; args != nil; args = CDR(args))
-    print_cell(ret = CAR(args));
-  *stk = CONS(ret, CDR(*stk));
-  FREE(args); FREE(ret);
+  pointer arg;
+  SAVE(arg);
+  arg = CAAR(*stk);
+  pc(arg);
+  *stk = CONS(nil, CDR(*stk));
+  FREE(arg);
+}
+
+void prim_newline(pointer *stk, pointer *env, pointer *cnt, pointer *dmp)
+{
+  putchar('\n');
 }
 
 void macro_quote(pointer *stk, pointer *env, pointer *cnt, pointer *dmp)
@@ -588,10 +594,9 @@ void prim_gensym(pointer *stk, pointer *env, pointer *cnt, pointer *dmp)
 
 pointer set(pointer env, char *ident, pointer value)
 {
-  for (pointer p = env; !TYPE(p, T_NIL); p = CDR(p)) {
+  for (pointer p = env; !TYPE(p, T_NIL); p = CDR(p))
     if (strcmp(CAAR(p)->ident, ident) == 0)
       return (CDAR(p) = value);
-  }
   error("Unbound variable: \"%s\"", ident);
 }
 
@@ -690,6 +695,8 @@ void prim_pairp(pointer *stk, pointer *env, pointer *cnt, pointer *dmp)
   FREE(arg); FREE(tmp);
 }
 
+void run_file(FILE *fp, bool repl, pointer *stk, pointer *env, pointer *cnt, pointer *dmp);
+
 pointer init_env()
 {
   pointer env, ret;
@@ -698,7 +705,8 @@ pointer init_env()
   add_primitive(&env, T_MACRO, "lambda", macro_lambda);
   add_primitive(&env, T_MACRO, "macro", macro_macro);
   add_primitive(&env, T_PRIM, "eval", prim_eval);
-  add_primitive(&env, T_PRIM, "print", prim_print);
+  add_primitive(&env, T_PRIM, "display", prim_display);
+  add_primitive(&env, T_PRIM, "newline", prim_newline);
   add_primitive(&env, T_MACRO, "quote", macro_quote);
   add_primitive(&env, T_PRIM, "_define", prim_define);
   add_primitive(&env, T_PRIM, "_def-reader-macro", prim_def_reader_macro);

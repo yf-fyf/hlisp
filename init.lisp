@@ -2,7 +2,8 @@
 ; lambda
 ; macro
 ; eval
-; print
+; display
+; newline
 ; quote
 ; _define
 ; _def-reader-macro
@@ -61,7 +62,7 @@
 ; ((macro (x y) x) (print 42) (print 0))
 ; ~> (eval (quote (print 42)))
 ; ~> (eval '(print 42))
-; ~> (print 42) ~> ... ~> 42 (with the side effect of printing "42")
+; ~> (print 42) ~> ... ~> null (with the side effect of printing "42")
 ; where the value of "(quote e)" is represented as "'e".
 ;
 ; Note that the argument "(print 0)" is not evaluated (there is no side effect by "(print 0)")
@@ -209,6 +210,13 @@
   (if (null? ls) null
       (cons (f (car ls)) (map f (cdr ls)))))
 
+(define (for-each f ls)
+  (if (null? ls) null
+      (begin (f (car ls)) (for-each f (cdr ls)))))
+
+(define (print . ls)
+  (for-each (lambda (x) (display x) (newline)) ls))
+
 (define (fold f v ls)
   (define (rec ls acc)
     (if (null? ls) acc
@@ -333,6 +341,9 @@
 (define-macro (unless cond then else)
   `(if (not ,cond) ,then ,else))
 
+(define-macro (when cond then)
+  `(if ,cond ,then null))
+
 (define-macro (let binds . body)
   (define vars (map car binds))
   (define prms (map cadr binds))
@@ -359,6 +370,10 @@
 (define (drop ls n)
   (if (= n 0) ls
       (drop (cdr ls) (- n 1))))
+
+(define (list-ref ls n)
+  (if (= n 0) (car ls)
+      (list-ref (cdr ls) (- n 1))))
 
 ; (define (staged-power n)
 ;   `(lambda (x)
