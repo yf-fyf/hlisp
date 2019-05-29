@@ -689,6 +689,19 @@ void prim_pairp(pointer *stk, pointer *env, pointer *cnt, pointer *dmp)
   FREE(arg); FREE(tmp);
 }
 
+void run_file(char *path, pointer *stk, pointer *env, pointer *cnt, pointer *dmp);
+
+void prim_load(pointer *stk, pointer *env, pointer *cnt, pointer *dmp)
+{
+  pointer arg, lstk, lcnt, ldmp; 
+  SAVE(arg); SAVE(lstk); SAVE(lcnt); SAVE(ldmp);
+  arg = CAAR(*stk);
+  assert(TYPE(arg, T_IDENT));
+  run_file(arg->ident, &lstk, env, &lcnt, &ldmp);
+  *stk = CONS(CAR(lstk), CDR(*stk));
+  FREE(arg); FREE(lstk); FREE(lcnt); FREE(ldmp);
+}
+
 pointer init_env()
 {
   pointer env, ret;
@@ -718,6 +731,7 @@ pointer init_env()
   add_primitive(&env, T_PRIM, "<", prim_lt);
   add_primitive(&env, T_PRIM, "eq?", prim_eqp);
   add_primitive(&env, T_PRIM, "pair?", prim_pairp);
+  add_primitive(&env, T_PRIM, "load", prim_load);
   ret = env;
   FREE(env);
   return ret;
