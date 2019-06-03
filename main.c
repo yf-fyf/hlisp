@@ -6,7 +6,7 @@
 #include <string.h>
 #include <assert.h>
 
-#define DEBUG      1
+#define DEBUG      0
 #define DEBUG_GC   0
 #define GC_VERBOSE 0
 
