@@ -1,30 +1,3 @@
-; -- List of primitive functions -- 
-; lambda
-; macro
-; eval
-; display
-; newline
-; quote
-; _define
-; _def-reader-macro
-; cons
-; car
-; cdr
-; gensym
-; _set!
-; begin
-; _if
-; +
-; -
-; *
-; /
-; %
-; =
-; <
-; eq?
-; pair?
-; ----
-
 ; -- About "_define" --
 ; The primitive "_define" evaluates given arguments strictly, 
 ; so that we have to wrap the identifier-part by "quote" to invoke it.
@@ -127,7 +100,6 @@
 (define null ())
 (define (null? x) (eq? x null))
 (define (atom? x) (not (pair? x)))
-(define (_ n) (- 0 n))
 (define (not x) (if x 0 1))
 
 (define-macro (define-reader-macro id e)
@@ -200,29 +172,6 @@
 
 (define else 1)
 
-(define (iota n)
-  (define (rec i)
-    (if (= i n) null
-        (cons i (rec (+ i 1)))))
-  (rec 0))
-
-(define (map f ls)
-  (if (null? ls) null
-      (cons (f (car ls)) (map f (cdr ls)))))
-
-(define (for-each f ls)
-  (if (null? ls) null
-      (begin (f (car ls)) (for-each f (cdr ls)))))
-
-(define (print . ls)
-  (for-each (lambda (x) (display x) (newline)) ls))
-
-(define (fold f v ls)
-  (define (rec ls acc)
-    (if (null? ls) acc
-        (rec (cdr ls) (f (car ls) acc))))
-  (rec ls v))
-
 (define (fold-right f v ls)
   (define (rec ls)
     (if (null? ls) v
@@ -244,38 +193,14 @@
 (define (append . ls)
   (fold-right binary-append null ls))
 
-(define (filter f ls)
-  (define (rec ls acc)
-      (if (null? ls) (reverse acc)
-          (rec (cdr ls)
-                   (if (f (car ls))
-                       (cons (car ls) acc)
-                       acc))))
-  (rec ls null))
+(define (for-each f ls)
+  (if (null? ls) null
+      (begin (f (car ls)) (for-each f (cdr ls)))))
 
-(define (remove f ls)
-  (filter (lambda (x) (not (f x))) ls))
+(define (print . ls)
+  (for-each (lambda (x) (display x) (newline)) ls))
 
-(define (last ls) (car (reverse ls)))
-
-(define (zip . lss)
-  (define (rec lss acc)
-    (if (null? (car lss))
-        (reverse acc)
-        (rec (map cdr lss) (cons (map car lss) acc))))
-  (rec lss null))
-
-(define (unzip1 ls) (map car ls))
-
-(define (unzip2 ls)
-  (list (map car ls) (map cadr ls)))
-
-(define (unzip3 ls)
-  (list (map car ls)
-        (map cadr ls)
-        (map caddr ls)))
-
-; ==== Quasiquote expansion ====
+; ==== Definition of quasiquote ====
 ; Reference: Alan Bawden. Quasiquotation in Lisp. In proceedings of PEPM, pp.4--12, 1999.
 ;
 ; The algorithm to implement "quasiquote expansion" relies on 
@@ -322,27 +247,22 @@
 (define (_quasiquote-expand x) (qq-expand (cadr x) 0))
 (define-macro (quasiquote-expand x)
   (eval (list '_quasiquote-expand (list 'quote x))))
-; ========
 
 (define quasiquote (macro (x) (list 'quasiquote-expand (list 'quote x))))
 (define-reader-macro ` 'quasiquote)
 (define-reader-macro ,@ 'unquote-splicing)
 (define-reader-macro , 'unquote)
-
-(define-macro (push expr ident)
-  `(set! ,ident (cons ,expr ,ident)))
-
-(define-macro (pop ident)
-  (define tmp (gensym))
-  `(begin (define ,tmp (car ,ident))
-          (set! ,ident (cdr ,ident))
-          ,tmp))
+; ========
 
 (define-macro (unless cond then else)
   `(if (not ,cond) ,then ,else))
 
 (define-macro (when cond then)
   `(if ,cond ,then null))
+
+(define (map f ls)
+  (if (null? ls) null
+      (cons (f (car ls)) (map f (cdr ls)))))
 
 (define-macro (let binds . body)
   (define vars (map car binds))
@@ -355,45 +275,4 @@
   (define init (map (lambda (p) `(define ,(car p) ,(cadr p))) binds))
   `((lambda () ,@init ,@body)))
 
-(define (sum ls) (fold + 0 ls))
-
-(define (length ls)
-  (sum (map (lambda (x) 1) ls)))
-
-(define (take ls n)
-  (define (rec i ls acc)
-    (if (= i 0)
-        (reverse acc)
-        (rec (- i 1) (cdr ls) (cons (car ls) acc))))
-  (rec n ls null))
-
-(define (drop ls n)
-  (if (= n 0) ls
-      (drop (cdr ls) (- n 1))))
-
-(define (list-ref ls n)
-  (if (= n 0) (car ls)
-      (list-ref (cdr ls) (- n 1))))
-
-; (define (staged-power n)
-;   `(lambda (x)
-;      ,(begin (define (rec n)
-;                (cond ((= n 0) '1) 
-;                      ((= n 1) 'x)
-;                      (else `(* x ,(rec (- n 1))))))
-;              (rec n))))
-; 
-; (print (staged-power 5))
-; (print (eval (staged-power 5)))
-; (print ((eval (staged-power 5)) 3))
-
-; (let ((ls (cdr (iota 101))))
-;   (map print
-;        (map (lambda (x)
-;               (let ((check (lambda (y) (= (% x y) 0))))
-;                 (cond ((check 15) 'FizzBuzz)
-;                       ((check 3)  'Fizz)
-;                       ((check 5)  'Buzz)
-;                       (else x))))
-;             ls)))
-
+(load 'library/list.lisp)
