@@ -94,6 +94,9 @@ pointer *root_ptrs[MAX_ROOT]; // root pointers for GC
 int rp = 0;                   // pointer of root pointers
 // --------
 
+#define SAVE(p) (assert(rp < MAX_ROOT), (p) = NULL, root_ptrs[rp++] = &(p))
+#define FREE(p) (assert(rp > 0), rp--)
+
 // ---- global constants ----
 const pointer nil      = &(cell){ T_NIL  };
 const pointer c_stop   = &(cell){ T_STOP  };
@@ -102,15 +105,6 @@ const pointer c_back   = &(cell){ T_BACK };
 const pointer c_ret    = &(cell){ T_RET  };
 const pointer c_argend = &(cell){ T_ARGEND };
 // --------
-
-#define BEGIN do {
-#define END   } while (0)
-#define SAVE(p) BEGIN                    \
-                  assert(rp < MAX_ROOT); \
-                  p = NULL;              \
-                  root_ptrs[rp++] = &p;  \
-                END
-#define FREE(p) (rp--)
 
 pointer alloc_memory()
 {
@@ -125,7 +119,7 @@ void mark(pointer *pp)
   pointer *stack[STACK_LENGTH];
   int sp = 0;
   push(pp);
-  while (sp > 0) {
+  do {
     pp = pop();
     if (*pp == NULL || TYPE(*pp, T_MARK))
       continue;
@@ -140,15 +134,15 @@ void mark(pointer *pp)
       push(&((*pp)->params));
       push(&((*pp)->body));
     }
-  }
+  } while (sp > 0);
 }
 
 void gc()
 {
-  int cnt;
+  int cnt = 0;
   for (int i = 0; i < rp; i++)
     mark(root_ptrs[i]);
-  for (mp = memory, cnt = 0; mp - memory < CELL_LIMIT; mp++) {
+  for (mp = memory; mp - memory < CELL_LIMIT; mp++) {
     if (TYPE(mp, T_MARK)) {
       mp->type &= T_UNMARK;
     } else {
@@ -224,6 +218,13 @@ pointer make_ident(char *ident)
 pointer make_closure(int type, pointer env, pointer params, pointer body)
 {
   return mk((cell){ type, .env = env, .params = params, .body = body });
+}
+
+pointer make_primitive(int type, char *name, primitive_func func)
+{
+  pointer p = mk((cell){ type, .func = func});
+  strcpy(p->name, name);
+  return p;
 }
 
 void pc(pointer p);
@@ -312,7 +313,7 @@ void unlex(FILE *fp, char c)
 
 int isident(char c)
 {
-  return !isspace(c) && !(c == '(' || c == ')' || c == ';');
+  return !isspace(c) && c != '(' && c != ')' && c != ';';
 }
 
 int read_num(FILE *fp, char c)
@@ -373,49 +374,47 @@ char *strrev(char *str)
 
 pointer parse_cell(FILE *fp)
 {
-  char c;
-  while ((c = space_lex(fp)) != EOF) {
-    if (isdigit(c)) {
-      return make_data(read_num(fp, c));
-    } else if (isident(c)) {
-      char *ident = read_ident(fp, c);
-      {// Matching for reader macros
-        int m_len = 0;
-        pointer macro = NULL;
-        for (pointer p = renv; !TYPE(p, T_NIL); p = CDR(p)) {
-          if (strstr(ident, CAAR(p)->ident) != NULL) {
-            int len = strlen(CAAR(p)->ident);
-            if (m_len < len) {
-              m_len = len;
-              macro = CAR(p);
-            }
+  char c = space_lex(fp);
+  if (c == EOF) {
+    return NULL;
+  } else if (isdigit(c)) {
+    return make_data(read_num(fp, c));
+  } else if (isident(c)) {
+    char *ident = read_ident(fp, c);
+    {// Matching for reader macros
+      int m_len = 0;
+      pointer macro = NULL;
+      for (pointer p = renv; !TYPE(p, T_NIL); p = CDR(p)) {
+        if (strstr(ident, CAAR(p)->ident) != NULL) {
+          int len = strlen(CAAR(p)->ident);
+          if (m_len < len) {
+            m_len = len;
+            macro = CAR(p);
           }
         }
-        if (macro != NULL) {
-          pointer tmp, ret; 
-          char *postfix;
-
-          SAVE(tmp);
-          postfix = strrev(ident+m_len);
-          while (*postfix != '\0')
-            unlex(fp, *(postfix++));
-          tmp = parse_cell(fp);
-          ret = CONS3(CDR(macro), tmp, nil);
-          FREE(tmp);
-          return ret;
-        }
       }
-      return make_ident(ident);
-    } else if (c == '(') {
-      if ((c = space_lex(fp)) == ')')
-        return nil;
-      unlex(fp, c);
-      return parse_list(fp);
-    } else {
-      error("Unexpeced input: '%c'", c);
+      if (macro != NULL) {
+        pointer tmp, ret; 
+        char *postfix;
+
+        SAVE(tmp);
+        postfix = strrev(ident+m_len);
+        while (*postfix != '\0')
+          unlex(fp, *(postfix++));
+        tmp = parse_cell(fp);
+        ret = CONS3(CDR(macro), tmp, nil);
+        FREE(tmp);
+        return ret;
+      }
     }
+    return make_ident(ident);
+  } else if (c == '(') {
+    if ((c = space_lex(fp)) == ')')
+      return nil;
+    unlex(fp, c);
+    return parse_list(fp);
   }
-  return NULL;
+  error("Unexpeced input: '%c'", c);
 }
 
 pointer zip(pointer p, pointer q)
@@ -449,16 +448,15 @@ pointer lookup(pointer env, char *ident)
   error("Unbound variable: \"%s\"", ident);
 }
 
-void add_primitive(pointer *env, int type, char *ident, primitive_func func)
+void add_primitive(pointer *env, int type, char *name, primitive_func func)
 {
-  pointer p, bind, tmp;
-  SAVE(p); SAVE(bind); SAVE(tmp);
-  p    = mk((cell){ type, .func = func });
-  strcpy(p->name, ident);
-  tmp  = make_ident(ident);
-  bind = CONS(tmp, p);
-  *env = CONS(bind, *env);
-  FREE(p); FREE(bind); FREE(tmp);
+  pointer prim, bind, ident;
+  SAVE(prim); SAVE(bind); SAVE(ident);
+  prim  = make_primitive(type, name, func);
+  ident = make_ident(name);
+  bind  = CONS(ident, prim);
+  *env  = CONS(bind, *env);
+  FREE(prim); FREE(bind); FREE(ident);
 } 
 
 void x_closure(int type, pointer *stk,  pointer *env, pointer *cnt, pointer *dmp)
@@ -579,11 +577,10 @@ void prim_cdr(pointer *stk, pointer *env, pointer *cnt, pointer *dmp)
 void prim_gensym(pointer *stk, pointer *env, pointer *cnt, pointer *dmp)
 {
   static int id = 0;
-  char ident[MAX_LEN];
   pointer tmp;
   SAVE(tmp);
-  sprintf(ident, "_G%03d", id++);
-  tmp = make_ident(ident);
+  tmp = make_ident("");
+  sprintf(tmp->ident, "_G%03d", id++);
   *stk = CONS(tmp, CDR(*stk));
   FREE(tmp);
 }
@@ -592,7 +589,7 @@ pointer set(pointer env, char *ident, pointer value)
 {
   for (pointer p = env; !TYPE(p, T_NIL); p = CDR(p))
     if (strcmp(CAAR(p)->ident, ident) == 0)
-      return (CDAR(p) = value);
+      return CDAR(p) = value;
   error("Unbound variable: \"%s\"", ident);
 }
 
@@ -702,39 +699,33 @@ void prim_load(pointer *stk, pointer *env, pointer *cnt, pointer *dmp)
   FREE(arg); FREE(lstk); FREE(lcnt); FREE(ldmp);
 }
 
-pointer init_env()
+void init_env(pointer *env)
 {
-  pointer env, ret;
-  SAVE(env);
-  env = nil;
-  add_primitive(&env, T_MACRO, "lambda", macro_lambda);
-  add_primitive(&env, T_MACRO, "macro", macro_macro);
-  add_primitive(&env, T_PRIM, "eval", prim_eval);
-  add_primitive(&env, T_PRIM, "display", prim_display);
-  add_primitive(&env, T_PRIM, "newline", prim_newline);
-  add_primitive(&env, T_MACRO, "quote", macro_quote);
-  add_primitive(&env, T_PRIM, "_define", prim_define);
-  add_primitive(&env, T_PRIM, "_def-reader-macro", prim_def_reader_macro);
-  add_primitive(&env, T_PRIM, "cons", prim_cons);
-  add_primitive(&env, T_PRIM, "car", prim_car);
-  add_primitive(&env, T_PRIM, "cdr", prim_cdr);
-  add_primitive(&env, T_PRIM, "gensym", prim_gensym);
-  add_primitive(&env, T_PRIM, "_set!", prim_set);
-  add_primitive(&env, T_PRIM, "begin", prim_begin);
-  add_primitive(&env, T_PRIM, "_if", prim_if);
-  add_primitive(&env, T_PRIM, "+", prim_add);
-  add_primitive(&env, T_PRIM, "-", prim_sub);
-  add_primitive(&env, T_PRIM, "*", prim_mul);
-  add_primitive(&env, T_PRIM, "/", prim_div);
-  add_primitive(&env, T_PRIM, "%", prim_mod);
-  add_primitive(&env, T_PRIM, "=", prim_eq);
-  add_primitive(&env, T_PRIM, "<", prim_lt);
-  add_primitive(&env, T_PRIM, "eq?", prim_eqp);
-  add_primitive(&env, T_PRIM, "pair?", prim_pairp);
-  add_primitive(&env, T_PRIM, "load", prim_load);
-  ret = env;
-  FREE(env);
-  return ret;
+  add_primitive(env, T_MACRO, "lambda", macro_lambda);
+  add_primitive(env, T_MACRO, "macro", macro_macro);
+  add_primitive(env, T_PRIM, "eval", prim_eval);
+  add_primitive(env, T_PRIM, "display", prim_display);
+  add_primitive(env, T_PRIM, "newline", prim_newline);
+  add_primitive(env, T_MACRO, "quote", macro_quote);
+  add_primitive(env, T_PRIM, "_define", prim_define);
+  add_primitive(env, T_PRIM, "_def-reader-macro", prim_def_reader_macro);
+  add_primitive(env, T_PRIM, "cons", prim_cons);
+  add_primitive(env, T_PRIM, "car", prim_car);
+  add_primitive(env, T_PRIM, "cdr", prim_cdr);
+  add_primitive(env, T_PRIM, "gensym", prim_gensym);
+  add_primitive(env, T_PRIM, "_set!", prim_set);
+  add_primitive(env, T_PRIM, "begin", prim_begin);
+  add_primitive(env, T_PRIM, "_if", prim_if);
+  add_primitive(env, T_PRIM, "+", prim_add);
+  add_primitive(env, T_PRIM, "-", prim_sub);
+  add_primitive(env, T_PRIM, "*", prim_mul);
+  add_primitive(env, T_PRIM, "/", prim_div);
+  add_primitive(env, T_PRIM, "%", prim_mod);
+  add_primitive(env, T_PRIM, "=", prim_eq);
+  add_primitive(env, T_PRIM, "<", prim_lt);
+  add_primitive(env, T_PRIM, "eq?", prim_eqp);
+  add_primitive(env, T_PRIM, "pair?", prim_pairp);
+  add_primitive(env, T_PRIM, "load", prim_load);
 }
 
 //============================================
@@ -805,10 +796,10 @@ pointer init_env()
 void debug_output(pointer stk, pointer env, pointer cnt, pointer dmp)
 {
 #if DEBUG
-  printf(" stk: "); print_cell(stk);
-  printf(" cnt: "); print_cell(cnt);
-  printf(" dmp: "); print_cell(dmp);
-  printf(" env: "); print_cell(env);
+  printf("stk: "); print_cell(stk);
+  printf("cnt: "); print_cell(cnt);
+  printf("dmp: "); print_cell(dmp);
+  printf("env: "); print_cell(env);
   puts("----");
 #endif
 }
@@ -890,20 +881,14 @@ void op_call(pointer *stk, pointer *env, pointer *cnt, pointer *dmp)
     *stk = CONS(args, *stk);
     func->func(stk, env, cnt, dmp);
   } else if (TYPE(func, T_CLOS | T_USRMACRO)) {
-    pointer clos_env, body; 
-    SAVE(clos_env); SAVE(body);
+    pointer clos_env, body, bind; 
+    SAVE(clos_env); SAVE(body); SAVE(bind);
     if (TYPE(func->params, T_IDENT)) {// If the closure is a variadic function/macro
-      pointer bind;
-      SAVE(bind);
       bind = CONS(func->params, args);
       clos_env = CONS(bind, func->env);
-      FREE(bind);
     } else {
-      pointer binds;
-      SAVE(binds);
-      binds = zip(func->params, args);
-      clos_env = append(binds, func->env);
-      FREE(binds);
+      bind = zip(func->params, args);
+      clos_env = append(bind, func->env);
     }
     body = CONS3(func->body, c_ret, nil);
     if (TYPE(func, T_CLOS)) {
@@ -919,7 +904,7 @@ void op_call(pointer *stk, pointer *env, pointer *cnt, pointer *dmp)
     *stk = nil;
     *env = clos_env;
     *cnt = body;
-    FREE(clos_env); FREE(body);
+    FREE(clos_env); FREE(body); FREE(bind);
   }
   FREE(args); FREE(func);
 }
@@ -983,9 +968,9 @@ int main(int argc, char **argv)
   pointer stk, env, cnt, dmp;
   SAVE(renv); SAVE(stk); SAVE(env); SAVE(cnt); SAVE(dmp);
 
-  memory    = mp = alloc_memory();
-  env       = init_env();
-  renv      = nil;
+  memory = mp = alloc_memory();
+  renv = nil;
+  init_env(&env);
   eval_cell = lookup(env, "eval");
 
   run_file(INIT_FILE, &stk, &env, &cnt, &dmp);
