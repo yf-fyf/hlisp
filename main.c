@@ -98,11 +98,11 @@ int rp = 0;                   // pointer of root pointers
 #define FREE(p) (assert(rp > 0), rp--)
 
 // ---- global constants ----
-const pointer nil      = &(cell){ T_NIL  };
-const pointer c_stop   = &(cell){ T_STOP  };
-const pointer c_call   = &(cell){ T_CALL };
-const pointer c_back   = &(cell){ T_BACK };
-const pointer c_ret    = &(cell){ T_RET  };
+const pointer nil      = &(cell){ T_NIL    };
+const pointer c_stop   = &(cell){ T_STOP   };
+const pointer c_call   = &(cell){ T_CALL   };
+const pointer c_back   = &(cell){ T_BACK   };
+const pointer c_ret    = &(cell){ T_RET    };
 const pointer c_argend = &(cell){ T_ARGEND };
 // --------
 
@@ -363,8 +363,7 @@ pointer parse_list(FILE *fp)
 
 char *strrev(char *str)
 {
-  int len = strlen(str);
-  for (int i = 0; i < len/2; i++) {
+  for (int i = 0, len = strlen(str); i < len/2; i++) {
     char tmp = str[i];
     str[i] = str[len-i-1];
     str[len-i-1] = tmp;
@@ -630,25 +629,45 @@ void prim_if(pointer *stk, pointer *env, pointer *cnt, pointer *dmp)
   FREE(args); FREE(cond_cell); FREE(true_cell); FREE(false_cell);
 }
 
-void prim_bin(pointer *stk, pointer *env, pointer *cnt, pointer *dmp, int (*op)(int, int))
+void prim_bin(pointer *stk, pointer *env, pointer *cnt, pointer *dmp, pointer (*op)(pointer, pointer))
 {
-  pointer args, n1, n2, tmp;
-  SAVE(args); SAVE(n1); SAVE(n2); SAVE(tmp);
+  pointer args, a1, a2, tmp;
+  SAVE(args); SAVE(a1); SAVE(a2); SAVE(tmp);
   args = CAR(*stk);
-  n1   = CAR(args);
-  n2   = CADR(args);
-  assert(TYPE(n1, T_DATA) && TYPE(n2, T_DATA));
-  tmp  = make_data(op(n1->data, n2->data));
+  a1   = CAR(args);
+  a2   = CADR(args);
+  tmp  = op(a1, a2);
   *stk = CONS(tmp, CDR(*stk));
-  FREE(args); FREE(n1); FREE(n2); FREE(tmp);
+  FREE(args); FREE(a1); FREE(a2); FREE(tmp);
+}
+
+pointer bin_op_eqp(pointer a1, pointer a2)
+{
+  bool eq;
+  if (TYPE(a1, T_IDENT) && TYPE(a2, T_IDENT))
+    eq = strcmp(a1->ident, a2->ident) == 0;
+  else if (TYPE(a1, T_DATA) && TYPE(a2, T_DATA))
+    eq = a1->data == a2->data;
+  else
+    eq = a1 == a2;
+  return make_data(eq?1:0);
+}
+
+#define DEFINE_PRIMITIVE(name)                                   \
+void prim_##name(pointer *s, pointer *e, pointer *c, pointer *d) \
+{                                                                \
+  prim_bin(s, e, c, d, bin_op_##name);                           \
 }
 
 #define DEFINE_ARITH_PRIMITIVE(name, op)                         \
-int bin_##name(int x, int y) { return x op y; }                  \
-void prim_##name(pointer *s, pointer *e, pointer *c, pointer *d) \
+pointer bin_op_##name(pointer a1, pointer a2)                    \
 {                                                                \
-  return prim_bin(s, e, c, d, bin_##name);                       \
-}
+  assert(TYPE(a1, T_DATA) && TYPE(a2, T_DATA));                  \
+  return make_data(a1->data op a2->data);                        \
+}                                                                \
+DEFINE_PRIMITIVE(name)
+
+DEFINE_PRIMITIVE(eqp)
 DEFINE_ARITH_PRIMITIVE(add, +)
 DEFINE_ARITH_PRIMITIVE(sub, -)
 DEFINE_ARITH_PRIMITIVE(mul, *)
@@ -656,25 +675,6 @@ DEFINE_ARITH_PRIMITIVE(div, /)
 DEFINE_ARITH_PRIMITIVE(mod, %)
 DEFINE_ARITH_PRIMITIVE(eq, ==)
 DEFINE_ARITH_PRIMITIVE(lt,  <)
-
-void prim_eqp(pointer *stk, pointer *env, pointer *cnt, pointer *dmp)
-{
-  bool eq;
-  pointer args, a1, a2, tmp;
-  SAVE(args); SAVE(a1); SAVE(a2); SAVE(tmp);
-  args = CAR(*stk);
-  a1   = CAR(args);
-  a2   = CADR(args);
-  if (TYPE(a1, T_IDENT) && TYPE(a2, T_IDENT))
-    eq = strcmp(a1->ident, a2->ident) == 0;
-  else if (TYPE(a1, T_DATA) && TYPE(a2, T_DATA))
-    eq = a1->data == a2->data;
-  else
-    eq = a1 == a2;
-  tmp  = make_data(eq?1:0);
-  *stk = CONS(tmp, CDR(*stk));
-  FREE(args); FREE(a1); FREE(a2); FREE(tmp);
-}
 
 void prim_pairp(pointer *stk, pointer *env, pointer *cnt, pointer *dmp)
 {
